@@ -30,5 +30,6 @@ gitconfig:
 	curl -Lo .git/hooks/commit-msg http://review.gerrithub.io/tools/hooks/commit-msg
 	chmod u+x .git/hooks/commit-msg
 	git config remote.origin.push HEAD:refs/for/master
+	git config remote.origin.receivepack "git receive-pack --reviewer rminnich --reviewer cross --reviewer ganshun"
 
 
