@@ -23,3 +23,12 @@ all: vmm
 # compilers are fast. Just rebuild it each time.
 vmm: 
 	$(CC) $(CFLAGS) $(LDFLAGS) -o vmm vmm.c lib/*.c $(LDLIBS)
+
+
+# this is intended to be idempotent, i.e. run it all you want.
+gitconfig:
+	curl -Lo .git/hooks/commit-msg http://review.gerrithub.io/tools/hooks/commit-msg
+	chmod u+x .git/hooks/commit-msg
+	git config remote.origin.push HEAD:refs/for/master
+
+
