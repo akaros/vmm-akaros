@@ -12,16 +12,17 @@
 #include <string.h>
 #include <ros/syscall.h>
 #include <sys/mman.h>
-#include <vmm/coreboot_tables.h>
-#include <vmm/vmm.h>
-#include <vmm/acpi/acpi.h>
+#include <coreboot_tables.h>
+#include <vmm.h>
+#include <acpi/acpi.h>
 #include <ros/arch/mmu.h>
 #include <ros/vmm.h>
 #include <parlib/uthread.h>
-#include <vmm/virtio.h>
-#include <vmm/virtio_mmio.h>
-#include <vmm/virtio_ids.h>
-#include <vmm/virtio_config.h>
+#include <bootparam.h>
+#include <virtio.h>
+#include <virtio_mmio.h>
+#include <virtio_ids.h>
+#include <virtio_config.h>
 
 int msrio(struct vmctl *vcpu, uint32_t opcode);
 
@@ -380,6 +381,8 @@ static void set_posted_interrupt(int vector)
 
 int main(int argc, char **argv)
 {
+	struct boot_params *bp;
+	char *cmdline;
 	uint64_t *p64;
 	void *a = (void *)0xe0000;
 	struct acpi_table_rsdp *r;
@@ -588,6 +591,15 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	// qemu does this.
 	//((uint8_t *)a)[4] = 1;
 	a += 4096;
+	/* point the bootparams at the last page. */
+
+	bp = a;
+	a += 4096;
+	cmdline = a;
+	a += 4096;
+
+	bp->ext_cmd_line_ptr = (uintptr_t) cmdline;
+	sprintf(cmdline, "earlyprintk=vmcall,keep console=hvc0 virtio_mmio.device=1M@0x100000000:32 maxcpus=1 acpi.debug_layer=0x2 acpi.debug_level=0xffffffff apic=debug noexec=off nohlt");
 
 	if (ros_syscall(SYS_setup_vmm, nr_gpcs, vmmflags, 0, 0, 0, 0) != nr_gpcs) {
 		perror("Guest pcore setup failed");
@@ -650,6 +662,7 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	vmctl.cr3 = (uint64_t) p512;
 	vmctl.regs.tf_rip = entry;
 	vmctl.regs.tf_rsp = (uint64_t) &stack[1024];
+	vmctl.regs.tf_r15 = (uint64_t) bp;
 	if (mcp) {
 		/* set up virtio bits, which depend on threads being enabled. */
 		register_virtio_mmio(&vqdev, virtio_mmio_base);

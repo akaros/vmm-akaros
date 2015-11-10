@@ -11,6 +11,7 @@
 CFLAGS          = -O2 -std=gnu99 -fno-stack-protector -fgnu89-inline -Wsystem-headers -fPIC -static -fno-omit-frame-pointer -g -Iinclude
 LDFLAGS          =
 LDLIBS         = -lpthread -lbenchutil -lm -liplib -lndblib
+DEST	= $(AKAROS)/kern/kfs/bin
 
 ### Build tools
 # 
@@ -18,12 +19,18 @@ CC=x86_64-ucb-akaros-gcc
 AR=x86_64-ucb-akaros-ar
 
 all: vmm
-	echo 'copy vmm to your akaros bin'
+
+install: all
+	echo "Installing vmm in $(DEST)"
+	cp vmm $(DEST)
 
 # compilers are fast. Just rebuild it each time.
 vmm: 
 	$(CC) $(CFLAGS) $(LDFLAGS) -o vmm vmm.c lib/*.c $(LDLIBS)
 
+
+clean:
+	rm -f vmm lib/*.o
 
 # this is intended to be idempotent, i.e. run it all you want.
 gitconfig:
