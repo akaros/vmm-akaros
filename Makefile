@@ -1,4 +1,4 @@
-#recursive make considered harmful. 
+#recursive make considered harmful.
 #http://www.tip.net.au/~millerp/rmch/recu-make-cons-harm.html
 # For a crazy complex way to do it:
 #http://evbergen.home.xs4all.nl/nonrecursive-make.html
@@ -13,7 +13,7 @@ LDFLAGS          =
 LDLIBS         = -lpthread -lbenchutil -lm -liplib -lndblib
 
 ### Build tools
-# 
+#
 CC=x86_64-ucb-akaros-gcc
 AR=x86_64-ucb-akaros-ar
 
@@ -21,7 +21,7 @@ all: vmm
 	echo 'copy vmm to your akaros bin'
 
 # compilers are fast. Just rebuild it each time.
-vmm: 
+vmm:
 	$(CC) $(CFLAGS) $(LDFLAGS) -o vmm vmm.c lib/*.c $(LDLIBS)
 
 
@@ -30,5 +30,6 @@ gitconfig:
 	curl -Lo .git/hooks/commit-msg http://review.gerrithub.io/tools/hooks/commit-msg
 	chmod u+x .git/hooks/commit-msg
 	git config remote.origin.push HEAD:refs/for/master
+	git config remote.origin.receivepack "git receive-pack --reviewer rminnich --reviewer cross --reviewer ganshun"
 
 
