@@ -18,6 +18,7 @@ CC=x86_64-ucb-akaros-gcc
 AR=x86_64-ucb-akaros-ar
 
 all: vmm
+	echo 'copy vmm to your akaros bin'
 
 # compilers are fast. Just rebuild it each time.
 vmm: 
