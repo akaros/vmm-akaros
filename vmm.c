@@ -389,6 +389,7 @@ int main(int argc, char **argv)
 	struct acpi_table_fadt *f;
 	struct acpi_table_madt *m;
 	struct acpi_table_xsdt *x;
+	struct acpi_table_hpet *h;
 	uint64_t virtiobase = 0x100000000ULL;
 	// lowmem is a bump allocated pointer to 2M at the "physbase" of memory 
 	void *lowmem = (void *) 0x1000000;
@@ -560,14 +561,27 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	a += sizeof(Apic0);
 	memmove(a, &Apic1, sizeof(Apic1));
 	a += sizeof(Apic1);
-	memmove(a, &isor, sizeof(isor));
-	a += sizeof(isor);
 	m->header.length = a - (void *)m;
 	gencsum(&m->header.checksum, m, m->header.length);
 	if (acpi_tb_checksum((uint8_t *) m, m->header.length) != 0) {
 		fprintf(stderr, "madt has bad checksum v2\n");
 		exit(1);
 	}
+
+
+	h = a;
+	fprintf(stderr, "install hpet to %p\n", h);
+	*h = hpet;
+	x->table_offset_entry[4] = (uint64_t) h;
+	a += sizeof(*h);
+	h->header.length = a - (void *)h;
+	gencsum(&h->header.checksum, h, h->header.length);
+	if (acpi_tb_checksum((uint8_t *)h, h->header.length) != 0) {
+		fprintf(stderr, "hpet has bad checksum v2\n");
+		exit(1);
+	}
+
+
 	fprintf(stderr, "allchecksums ok\n");
 
 	gencsum(&x->header.checksum, x, x->header.length);
