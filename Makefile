@@ -25,9 +25,10 @@ install: all
 	cp vmm $(DEST)
 
 # compilers are fast. Just rebuild it each time.
-vmm:
+vmm: FORCE
 	$(CC) $(CFLAGS) $(LDFLAGS) -o vmm vmm.c lib/*.c $(LDLIBS)
 
+FORCE:
 
 clean:
 	rm -f vmm lib/*.o
