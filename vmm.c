@@ -106,6 +106,46 @@ struct acpi_madt_local_apic Apic0 = {.header = {.type = ACPI_MADT_TYPE_LOCAL_API
 struct acpi_madt_io_apic Apic1 = {.header = {.type = ACPI_MADT_TYPE_IO_APIC, .length = sizeof(struct acpi_madt_io_apic)},
 				  .id = 1, .address = 0xfec00000, .global_irq_base = 0};
 
+struct acpi_madt_interrupt_override isor[] = {
+	/* I have no idea if it should be source irq 2, global 0, or global 2, source 0. Shit. */
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 2, .global_irq = 0, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 1, .global_irq = 1, .inti_flags = 0},
+	//{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 //.bus = 0, .source_irq = 2, .global_irq = 2, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 3, .global_irq = 3, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 4, .global_irq = 4, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 5, .global_irq = 5, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 6, .global_irq = 6, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 7, .global_irq = 7, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 8, .global_irq = 8, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 9, .global_irq = 9, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 10, .global_irq = 10, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 11, .global_irq = 11, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 12, .global_irq = 12, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 13, .global_irq = 13, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 14, .global_irq = 14, .inti_flags = 0},
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 15, .global_irq = 15, .inti_flags = 0},
+	// VMMCP routes irq 32 to gsi 17
+	{.header = {.type = ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, .length = sizeof(struct acpi_madt_interrupt_override)},
+	 .bus = 0, .source_irq = 32, .global_irq = 17, .inti_flags = 5},
+};
+
+
 /* this test will run the "kernel" in the negative address space. We hope. */
 void *low1m;
 uint8_t low4k[4096];
@@ -540,6 +580,8 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	a += sizeof(Apic0);
 	memmove(a, &Apic1, sizeof(Apic1));
 	a += sizeof(Apic1);
+	memmove(a, &isor, sizeof(isor));
+	a += sizeof(isor);
 	m->header.length = a - (void *)m;
 	gencsum(&m->header.checksum, m, m->header.length);
 	if (acpi_tb_checksum((uint8_t *) m, m->header.length) != 0) {
