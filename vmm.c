@@ -1,4 +1,4 @@
-#include <stdio.h> 
+#include <stdio.h>
 #include <pthread.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -28,8 +28,8 @@ int msrio(struct vmctl *vcpu, uint32_t opcode);
 
 struct vmctl vmctl;
 
-/* Kind of sad what a total clusterf the pc world is. By 1999, you could just scan the hardware 
- * and work it out. But 2005, that was no longer possible. How sad. 
+/* Kind of sad what a total clusterf the pc world is. By 1999, you could just scan the hardware
+ * and work it out. But 2005, that was no longer possible. How sad.
  * so we have to fake acpi to make it all work. !@#$!@#$#.
  * This will be copied to memory at 0xe0000, so the kernel can find it.
  */
@@ -79,7 +79,7 @@ struct acpi_table_madt madt = {
 		.asl_compiler_id = "RON ",
 		.asl_compiler_revision = 0,
 	},
-	
+
 	.address = 0xfee00000ULL,
 };
 
@@ -171,7 +171,7 @@ int nr_threads = 4;
 int debug = 0;
 int resumeprompt = 0;
 /* unlike Linux, this shared struct is for both host and guest. */
-//	struct virtqueue *constoguest = 
+//	struct virtqueue *constoguest =
 //		vring_new_virtqueue(0, 512, 8192, 0, inpages, NULL, NULL, "test");
 uint64_t virtio_mmio_base = 0x100000000ULL;
 
@@ -220,7 +220,7 @@ void *consout(void *arg)
 		fprintf(stderr, "----------------------- TT a %p\n", a);
 		fprintf(stderr, "talk thread ttargs %x v %x\n", a, v);
 	}
-	
+
 	for(num = 0;;num++) {
 		//int debug = 1;
 		/* host: use any buffers we should have been sent. */
@@ -257,7 +257,7 @@ void *consout(void *arg)
 	return NULL;
 }
 
-// FIXME. 
+// FIXME.
 volatile int consdata = 0;
 
 void *consin(void *arg)
@@ -279,7 +279,7 @@ void *consin(void *arg)
 	//char c[1];
 
 	int fd = open("#cons/vmctl", O_RDWR), ret;
-	
+
 	if (debug) fprintf(stderr, "Spin on console being read, print num queues, halt\n");
 
 	for(num = 0;! quit;num++) {
@@ -298,7 +298,7 @@ void *consin(void *arg)
 			memset(consline, 0, 128);
 			if (read(0, consline, 1) < 0) {
 				exit(0);
-			} 
+			}
 			if (debug) fprintf(stderr, "CONSIN: GOT A LINE:%s:\n", consline);
 			if (debug) fprintf(stderr, "CONSIN: OUTLEN:%d:\n", outlen);
 			if (strlen(consline) < 3 && consline[0] == 'q' ) {
@@ -366,7 +366,7 @@ static uint8_t acpi_tb_checksum(uint8_t *buffer, uint32_t length)
 static void gencsum(uint8_t *target, void *data, int len)
 {
 	uint8_t csum;
-	// blast target to zero so it does not get counted (it might be in the struct we checksum) 
+	// blast target to zero so it does not get counted (it might be in the struct we checksum)
 	// And, yes, it is, goodness.
 	fprintf(stderr, "gencsum %p target %p source %d bytes\n", target, data, len);
 	*target = 0;
@@ -433,7 +433,7 @@ int main(int argc, char **argv)
 	struct acpi_table_xsdt *x;
 	struct acpi_table_hpet *h;
 	uint64_t virtiobase = 0x100000000ULL;
-	// lowmem is a bump allocated pointer to 2M at the "physbase" of memory 
+	// lowmem is a bump allocated pointer to 2M at the "physbase" of memory
 	void *lowmem = (void *) 0x1000000;
 	//struct vmctl vmctl;
 	int amt;
@@ -641,7 +641,7 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	memset(a, 0, 4096);
 	a += 4096;
 	vmctl.vapic = (uint64_t) a;
-	//vmctl.vapic = (uint64_t) a_page;	
+	//vmctl.vapic = (uint64_t) a_page;
 	memset(a, 0, 4096);
 	((uint32_t *)a)[0x30/4] = 0x01060014;
 	p64 = a;
@@ -649,14 +649,18 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	// qemu does this.
 	//((uint8_t *)a)[4] = 1;
 	a += 4096;
-	/* point the bootparams at the last page. */
 
+	/* point the bootparams at the last page. */
 	bp = a;
+
+	/* Zero the bootparams page before writing to it, or Linux thinks we're talking crazy. */
+	memset(bp, 0, 4096);
+
 	a += 4096;
 	cmdline = a;
 	a += 4096;
 
-	bp->ext_cmd_line_ptr = (uintptr_t) cmdline;
+	bp->hdr.cmd_line_ptr = (uintptr_t) cmdline;
 	sprintf(cmdline, "earlyprintk=vmcall,keep console=hvc0 virtio_mmio.device=1M@0x100000000:32 maxcpus=1 acpi.debug_layer=0x2 acpi.debug_level=0xffffffff apic=debug noexec=off nohlt");
 
 	if (ros_syscall(SYS_setup_vmm, nr_gpcs, vmmflags, 0, 0, 0, 0) != nr_gpcs) {
@@ -720,14 +724,14 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	vmctl.cr3 = (uint64_t) p512;
 	vmctl.regs.tf_rip = entry;
 	vmctl.regs.tf_rsp = (uint64_t) &stack[1024];
-	vmctl.regs.tf_r15 = (uint64_t) bp;
+	vmctl.regs.tf_rsi = (uint64_t) bp;
 	if (mcp) {
 		/* set up virtio bits, which depend on threads being enabled. */
 		register_virtio_mmio(&vqdev, virtio_mmio_base);
 	}
 	fprintf(stderr, "threads started\n");
 	fprintf(stderr, "Writing command :%s:\n", cmd);
-	
+
 	if(debug) vapic_status_dump(stderr, (void *)vmctl.vapic);
 
 	ret = pwrite(fd, &vmctl, sizeof(vmctl), 0);
@@ -874,9 +878,9 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 				//fprintf(stderr, "RIP %p, shutdown 0x%x\n", vmctl.regs.tf_rip, vmctl.shutdown);
 				//showstatus(stderr, &vmctl);
 				break;
-			case EXIT_REASON_APIC_ACCESS:				
+			case EXIT_REASON_APIC_ACCESS:
 				if (1 || debug)fprintf(stderr, "APIC READ EXIT\n");
-				
+
 				uint64_t gpa, *regp, val;
 				uint8_t regx;
 				int store, size;
@@ -926,7 +930,7 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 		}
 	}
 
-	/* later. 
+	/* later.
 	for (int i = 0; i < nr_threads-1; i++) {
 		int ret;
 		if (pthread_join(my_threads[i], &my_retvals[i]))
