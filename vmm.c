@@ -661,7 +661,21 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	a += 4096;
 
 	bp->hdr.cmd_line_ptr = (uintptr_t) cmdline;
-	sprintf(cmdline, "earlyprintk=vmcall,keep console=hvc0 virtio_mmio.device=1M@0x100000000:32 nosmp maxcpus=1 acpi.debug_layer=0x2 acpi.debug_level=0xffffffff apic=debug noexec=off nohlt init=/bin/sh lapic=notscdeadline lapictimerfreq=1000");
+
+	sprintf(cmdline, "earlyprintk=vmcall,keep"
+		             " console=hvc0"
+		             " virtio_mmio.device=1M@0x100000000:32"
+		             " nosmp"
+		             " maxcpus=1"
+		             " acpi.debug_layer=0x2"
+		             " acpi.debug_level=0xffffffff"
+		             " apic=debug"
+		             " noexec=off"
+		             " nohlt"
+		             " init=/bin/sh"
+		             " lapic=notscdeadline"
+		             " lapictimerfreq=1000"
+		             " pit=none");
 
 	if (ros_syscall(SYS_setup_vmm, nr_gpcs, vmmflags, 0, 0, 0, 0) != nr_gpcs) {
 		perror("Guest pcore setup failed");
