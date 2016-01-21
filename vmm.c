@@ -312,7 +312,7 @@ void *consin(void *arg)
 		if (debug) fprintf(stderr, "call add_used\n");
 		/* host: now ack that we used them all. */
 		add_used(v, head, outlen+inlen);
-		consdata = 1;
+		// consdata = 1;
 		if (debug) fprintf(stderr, "DONE call add_used\n");
 
 		// Send spurious for testing (Gan)
@@ -853,11 +853,23 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 			case EXIT_REASON_MSR_WRITE:
 			case EXIT_REASON_MSR_READ:
 				fprintf(stderr, "Do an msr\n");
-				quit = msrio(&vmctl, vmctl.ret_code);
-				if (quit) {
+				if ( msrio(&vmctl, vmctl.ret_code) ) { // uh-oh, msrio failed
+					// well, hand back a GP fault which is what Intel does
 					fprintf(stderr, "MSR FAILED: RIP %p, shutdown 0x%x\n", vmctl.regs.tf_rip, vmctl.shutdown);
 					showstatus(stderr, &vmctl);
+
+					// Use event injection through vmctl to send
+					// a general protection fault
+					// vmctl.interrupt gets written to the VM-Entry
+					// Interruption-Information Field by vmx
+					vmctl.command = RESUME;
+					vmctl.interrupt = (1 << 31) // "Valid" bit
+									| (0 << 12) // Reserved by Intel
+									| (1 << 11) // Deliver-error-code bit (set if event pushes error code to stack)
+									| (3 << 8)  // Event type (3 is "hardware exception")
+									| 13;       // Interrupt/exception vector (13 is "general protection fault")
 				}
+
 				break;
 			case EXIT_REASON_MWAIT_INSTRUCTION:
 			  fflush(stdout);
@@ -918,7 +930,7 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 				if (1 || debug)fprintf(stderr, "APIC WRITE EXIT\n");
 				break;
 			default:
-				fprintf(stderr, "Don't know how to handle exit %d\n", vmctl.ret_code);
+				fprintf(stderr, "Don't know how to handle exit %d (%x)\n", vmctl.ret_code, vmctl.ret_code);
 				fprintf(stderr, "RIP %p, shutdown 0x%x\n", vmctl.regs.tf_rip, vmctl.shutdown);
 				showstatus(stderr, &vmctl);
 				quit = 1;
