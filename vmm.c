@@ -864,10 +864,13 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 					// Interruption-Information Field by vmx
 					vmctl.command = RESUME;
 					vmctl.interrupt = (1 << 31) // "Valid" bit
-									| (0 << 12) // Reserved by Intel
-									| (1 << 11) // Deliver-error-code bit (set if event pushes error code to stack)
-									| (3 << 8)  // Event type (3 is "hardware exception")
-									| 13;       // Interrupt/exception vector (13 is "general protection fault")
+					                | (0 << 12) // Reserved by Intel
+					                | (1 << 11) // Deliver-error-code bit (set if event pushes error code to stack)
+					                | (3 << 8)  // Event type (3 is "hardware exception")
+					                | 13;       // Interrupt/exception vector (13 is "general protection fault")
+				} else {
+					vmctl.regs.tf_rip += 2;
+					vmctl.command = REG_ALL;
 				}
 
 				break;
