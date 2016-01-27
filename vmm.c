@@ -648,20 +648,22 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	// set up apic values? do we need to?
 	// qemu does this.
 	//((uint8_t *)a)[4] = 1;
+
+
+
+	/* Allocate memory for, and zero the bootparams
+	 * page before writing to it, or Linux thinks
+	 * we're talking crazy.
+	 */
 	a += 4096;
-
-	/* point the bootparams at the last page. */
 	bp = a;
-
-	/* Zero the bootparams page before writing to it, or Linux thinks we're talking crazy. */
 	memset(bp, 0, 4096);
 
+	/* Set the kernel command line parameters */
 	a += 4096;
 	cmdline = a;
 	a += 4096;
-
 	bp->hdr.cmd_line_ptr = (uintptr_t) cmdline;
-
 	sprintf(cmdline, "earlyprintk=vmcall,keep"
 		             " console=hvc0"
 		             " virtio_mmio.device=1M@0x100000000:32"
@@ -676,6 +678,28 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 		             " lapic=notscdeadline"
 		             " lapictimerfreq=1000"
 		             " pit=none");
+
+
+	/* Put the e820 memory region information in the boot_params */
+	bp->e820_entries = 4;
+	bp->e820_map[0].addr = 0;
+	bp->e820_map[0].size = 16*1048576;
+	bp->e820_map[0].type = E820_RESERVED;
+
+	bp->e820_map[1].addr = 16*1048576;
+	bp->e820_map[1].size = 128*1048576;
+	bp->e820_map[1].type = E820_RAM;
+
+	bp->e820_map[2].addr = 4096*1048576;
+	bp->e820_map[2].size = 2*1048576;
+	bp->e820_map[2].type = E820_RAM;
+
+	bp->e820_map[3].addr = 0xf0000000;
+	bp->e820_map[3].size = 0x10000000;
+	bp->e820_map[3].type = E820_RESERVED;
+
+
+
 
 	if (ros_syscall(SYS_setup_vmm, nr_gpcs, vmmflags, 0, 0, 0, 0) != nr_gpcs) {
 		perror("Guest pcore setup failed");
