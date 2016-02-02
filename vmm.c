@@ -188,18 +188,36 @@ static void set_posted_interrupt(int vector);
 #define ADDR				BITOP_ADDR(addr)
 static inline int test_and_set_bit(int nr, volatile unsigned long *addr);
 
-int timer_started = 0;
-pthread_t timerthread_struct;
+static int timer_started;
+static pthread_t timerthread_struct;
 
 void *timer_thread(void *arg)
 {
 	int fd = open("#cons/vmctl", O_RDWR), ret;
+	int initcount;
 
-	while (1) {
-		set_posted_interrupt(0xef);
-		pwrite(fd, &vmctl, sizeof(vmctl), 1<<12);
-		uthread_usleep(1);
+	fprintf(stderr, "TIMER THREAD START 0x%llx\n", vmctl.timer_msr);
+
+	// We only begin injection when linux writes a non zero initial count
+	initcount = vmctl.initial_count;
+	while (!initcount) {
+		uthread_usleep(10000);
+		initcount = vmctl.initial_count;
 	}
+	fprintf(stderr, "INJECTING TIMER 0x%llx\n", vmctl.timer_msr);
+
+	fflush(stderr);
+	while (1) {
+		if (initcount) {
+			set_posted_interrupt(vmctl.timer_msr & 0xff);
+			//set_posted_interrupt(0xff);
+			pwrite(fd, &vmctl, sizeof(vmctl), 1<<12);
+		}
+		uthread_usleep(10000);
+		// check initcount again to make sure linux still wants it
+		initcount = vmctl.initial_count;
+	}
+	close(fd);
 }
 
 void *consout(void *arg)
@@ -320,15 +338,6 @@ void *consin(void *arg)
 		virtio_mmio_set_vring_irq();
 
 		pwrite(fd, &vmctl, sizeof(vmctl), 1<<12);
-		if (0 && !timer_started && mcp) {
-			// Start up timer thread
-			if (pthread_create(&timerthread_struct, NULL, timer_thread, NULL)) {
-				fprintf(stderr, "pth_create failed for timer thread.");
-				perror("pth_create");
-			} else {
-				timer_started = 1;
-			}
-		}
 	}
 	fprintf(stderr, "All done\n");
 	return NULL;
@@ -391,7 +400,7 @@ static void pir_dump()
 	int i;
 	fprintf(stderr, "-------Begin PIR dump-------\n");
 	for (i = 0; i < 8; i++){
-		fprintf(stderr, "Byte %d: 0x%016x\n", i, pir_ptr[i]);
+		fprintf(stderr, "Byte %d: 0x%016lx\n", i, pir_ptr[i]);
 	}
 	fprintf(stderr, "-------End PIR dump-------\n");
 }
@@ -410,13 +419,17 @@ static void set_posted_interrupt(int vector)
 	if(debug) vapic_status_dump(stderr, (void *)vmctl.vapic);
 	if(debug) fprintf(stderr, "%s: Setting pir bit offset %d at 0x%p\n", __func__,
 			bit_offset, bit_vec);
-	test_and_set_bit(bit_offset, bit_vec);
+	if(test_and_set_bit(bit_offset, bit_vec)){
+		// fprintf(stderr, "FAIL\n");
+	} else {
+		// fprintf(stderr, "PASS\n");
+	}
 
 	// Set outstanding notification bit
-	/*bit_vec = pir + 4;
-	fprintf(stderr, "%s: Setting pir bit offset 0 at 0x%p", __func__,
+	bit_vec = pir + 4;
+	if(debug) fprintf(stderr, "%s: Setting pir bit offset 0 at 0x%p", __func__,
 			bit_vec);
-	test_and_set_bit(0, bit_vec);*/
+	test_and_set_bit(0, bit_vec);
 
 	if(debug) pir_dump();
 }
@@ -448,6 +461,7 @@ int main(int argc, char **argv)
 	uint8_t csum;
 	void *coreboot_tables = (void *) 0x1165000;
 	void *a_page;
+	uint64_t tsc_freq_khz;
 fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 
 	// mmap is not working for us at present.
@@ -664,6 +678,8 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	cmdline = a;
 	a += 4096;
 	bp->hdr.cmd_line_ptr = (uintptr_t) cmdline;
+
+	tsc_freq_khz = get_tsc_freq()/1000;
 	sprintf(cmdline, "earlyprintk=vmcall,keep"
 		             " console=hvc0"
 		             " virtio_mmio.device=1M@0x100000000:32"
@@ -676,8 +692,9 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 		             " nohlt"
 		             " init=/bin/sh"
 		             " lapic=notscdeadline"
-		             " lapictimerfreq=1000"
-		             " pit=none");
+		             " lapictimerfreq=1000000"
+		             " pit=none"
+			     " tscfreq=%lld", tsc_freq_khz);
 
 
 	/* Put the e820 memory region information in the boot_params */
@@ -771,6 +788,18 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 	fprintf(stderr, "threads started\n");
 	fprintf(stderr, "Writing command :%s:\n", cmd);
 
+	// Start up timer thread
+	if (1 && !timer_started && mcp) {
+		// Start up timer thread
+		if (pthread_create(&timerthread_struct, NULL, timer_thread, NULL)) {
+			fprintf(stderr, "pth_create failed for timer thread.\n");
+			perror("pth_create");
+		} else {
+			fprintf(stderr, "Starting Timer\n");
+			timer_started = 1;
+		}
+	}
+
 	if(debug) vapic_status_dump(stderr, (void *)vmctl.vapic);
 
 	ret = pwrite(fd, &vmctl, sizeof(vmctl), 0);
@@ -854,8 +883,7 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 				vmctl.regs.tf_rip += 3;
 				break;
 			case EXIT_REASON_EXTERNAL_INTERRUPT:
-				//debug = 1;
-				if (debug) fprintf(stderr, "XINT 0x%x 0x%x\n", vmctl.intrinfo1, vmctl.intrinfo2);
+
 				if (debug) pir_dump();
 				vmctl.command = RESUME;
 				break;

@@ -36,18 +36,41 @@ struct emmsr {
 	uint32_t edx, eax;
 };
 // Might need to mfence rdmsr.  supposedly wrmsr serializes, but not for x2APIC
-static inline uint64_t read_msr(uint32_t reg)
+static int
+read_msr(struct vmctl *vcpu, uint32_t reg, uint32_t *edx, uint32_t *eax)
 {
-	uint32_t edx, eax;
-	asm volatile("rdmsr; mfence" : "=d"(edx), "=a"(eax) : "c"(reg));
-	return (uint64_t)edx << 32 | eax;
+	uint64_t msr_val[128];
+	int fd = open("#arch/msr", O_RDWR);
+
+	if (pread(fd, msr_val, sizeof(msr_val), reg)<0) {
+		fprintf(stderr, "MSR read failed %r\n");
+		close(fd);
+		return -1;
+	}
+	else {
+		*edx = msr_val[vcpu->core] >> 32;
+		*eax = msr_val[vcpu->core] & 0xffffffff;
+		close(fd);
+		return 0;
+	}
 }
 
-static inline void write_msr(uint32_t reg, uint64_t val)
+static int
+write_msr(struct vmctl *vcpu, uint32_t reg, uint32_t edx, uint32_t eax)
 {
-	asm volatile("wrmsr" : : "d"((uint32_t)(val >> 32)),
-	                         "a"((uint32_t)(val & 0xFFFFFFFF)), 
-	                         "c"(reg));
+	uint64_t msr_val;
+	int fd = open("#arch/msr", O_RDWR);
+
+	msr_val = ((uint64_t)edx <<32) | eax;
+	if (pwrite(fd, &msr_val, sizeof(msr_val), reg)<0) {
+		fprintf(stderr, "MSR write failed %r\n");
+		close(fd);
+		return -1;
+	}
+	else {
+		close(fd);
+		return 0;
+	}
 }
 
 int emsr_miscenable(struct vmctl *vcpu, struct emmsr *, uint32_t);
@@ -56,6 +79,9 @@ int emsr_readonly(struct vmctl *vcpu, struct emmsr *, uint32_t);
 int emsr_readzero(struct vmctl *vcpu, struct emmsr *, uint32_t);
 int emsr_fakewrite(struct vmctl *vcpu, struct emmsr *, uint32_t);
 int emsr_ok(struct vmctl *vcpu, struct emmsr *, uint32_t);
+
+int emsr_lapicvec(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode);
+int emsr_lapicinitialcount(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode);
 
 struct emmsr emmsrs[] = {
 	{MSR_IA32_MISC_ENABLE, "MSR_IA32_MISC_ENABLE", emsr_miscenable},
@@ -99,6 +125,10 @@ struct emmsr emmsrs[] = {
 	// mostly harmless.
 	{MSR_TSC_AUX, "MSR_TSC_AUX", emsr_fakewrite},
 	{MSR_RAPL_POWER_UNIT, "MSR_RAPL_POWER_UNIT", emsr_readzero},
+	{MSR_LAPIC_TIMER, "MSR_LAPIC_TIMER", emsr_lapicvec},
+	{MSR_LAPIC_THERMAL, "MSR_LAPIC_THERMAL", emsr_fakewrite},
+	{MSR_LAPIC_INITCOUNT, "MSR_LAPIC_INITCOUNT", emsr_lapicinitialcount},
+	//{MSR_LAPIC_INITCOUNT, "MSR_LAPIC_INITCOUNT", emsr_fakewrite},
 };
 
 static uint64_t set_low32(uint64_t hi, uint32_t lo)
@@ -122,7 +152,11 @@ static uint64_t set_low8(uint64_t hi, uint8_t lo)
 int emsr_miscenable(struct vmctl *vcpu, struct emmsr *msr,
 		    uint32_t opcode) {
 	uint32_t eax, edx;
-	rdmsr(msr->reg, eax, edx);
+
+	if (read_msr(vcpu, msr->reg, &edx, &eax) < 0) {
+		return SHUTDOWN_UNHANDLED_EXIT_REASON;
+	}
+
 	/* we just let them read the misc msr for now. */
 	if (opcode == EXIT_REASON_MSR_READ) {
 		vcpu->regs.tf_rax = set_low32(vcpu->regs.tf_rax, eax);
@@ -145,7 +179,10 @@ int emsr_miscenable(struct vmctl *vcpu, struct emmsr *msr,
 int emsr_mustmatch(struct vmctl *vcpu, struct emmsr *msr,
 		   uint32_t opcode) {
 	uint32_t eax, edx;
-	rdmsr(msr->reg, eax, edx);
+
+	if (read_msr(vcpu, msr->reg, &edx, &eax) < 0) {
+		return SHUTDOWN_UNHANDLED_EXIT_REASON;
+	}
 	/* we just let them read the misc msr for now. */
 	if (opcode == EXIT_REASON_MSR_READ) {
 		vcpu->regs.tf_rax = set_low32(vcpu->regs.tf_rax, eax);
@@ -167,11 +204,13 @@ int emsr_mustmatch(struct vmctl *vcpu, struct emmsr *msr,
 int emsr_ok(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode)
 {
 	if (opcode == EXIT_REASON_MSR_READ) {
-		rdmsr(msr->reg, vcpu->regs.tf_rdx, vcpu->regs.tf_rax);
+		if (read_msr(vcpu, msr->reg, (uint32_t *)&(vcpu->regs.tf_rdx),
+		         (uint32_t *)&(vcpu->regs.tf_rax)) < 0) {
+			return SHUTDOWN_UNHANDLED_EXIT_REASON;
+		}
 	} else {
-		uint64_t val =
-			(uint64_t) vcpu->regs.tf_rdx << 32 | vcpu->regs.tf_rax;
-		write_msr(msr->reg, val);
+		write_msr(vcpu, msr->reg, (uint32_t)vcpu->regs.tf_rdx,
+		          (uint32_t)vcpu->regs.tf_rax);
 	}
 	return 0;
 }
@@ -179,7 +218,9 @@ int emsr_ok(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode)
 int emsr_readonly(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode)
 {
 	uint32_t eax, edx;
-	rdmsr((uint32_t) vcpu->regs.tf_rcx, eax, edx);
+	if (read_msr(vcpu, (uint32_t) vcpu->regs.tf_rcx, &edx, &eax) < 0) {
+		return SHUTDOWN_UNHANDLED_EXIT_REASON;
+	}
 	/* we just let them read the misc msr for now. */
 	if (opcode == EXIT_REASON_MSR_READ) {
 		vcpu->regs.tf_rax = set_low32(vcpu->regs.tf_rax, eax);
@@ -207,8 +248,11 @@ int emsr_readzero(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode)
 int emsr_fakewrite(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode)
 {
 	uint32_t eax, edx;
+
 	if (!msr->written) {
-		rdmsr(msr->reg, eax, edx);
+		if (read_msr(vcpu, msr->reg, &edx, &eax) < 0) {
+			return SHUTDOWN_UNHANDLED_EXIT_REASON;
+		}
 	} else {
 		edx = msr->edx;
 		eax = msr->eax;
@@ -226,6 +270,58 @@ int emsr_fakewrite(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode)
 		msr->edx = vcpu->regs.tf_rdx;
 		msr->eax = vcpu->regs.tf_rax;
 		msr->written = true;
+	}
+	return 0;
+}
+
+int emsr_lapicvec(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode)
+{
+	uint32_t eax, edx;
+
+	if (opcode == EXIT_REASON_MSR_WRITE) {
+		edx = vcpu->regs.tf_rdx;
+		eax = vcpu->regs.tf_rax;
+		// Read the written value into vcpu
+		vcpu->timer_msr = ((uint64_t)edx << 32) | eax;
+		msr->written = true;
+	} else {
+		if (!msr->written)
+			if (read_msr(vcpu, msr->reg, &edx, &eax) < 0) {
+				return SHUTDOWN_UNHANDLED_EXIT_REASON;
+			}
+		else {
+			edx = (uint32_t)(vcpu->timer_msr >> 32);
+			eax = (uint32_t)vcpu->timer_msr;
+		}
+		vcpu->regs.tf_rax = set_low32(vcpu->regs.tf_rax, eax);
+		vcpu->regs.tf_rdx = set_low32(vcpu->regs.tf_rdx, edx);
+	}
+	return 0;
+}
+
+int emsr_lapicinitialcount(struct vmctl *vcpu, struct emmsr *msr, uint32_t opcode)
+{
+	uint32_t eax, edx;
+
+	//fprintf(stderr, "WE ARE HEREEEEE\n");
+
+	if (opcode == EXIT_REASON_MSR_WRITE) {
+		edx = vcpu->regs.tf_rdx;
+		eax = vcpu->regs.tf_rax;
+		// Read the written value into vcpu
+		vcpu->initial_count = ((uint64_t)edx << 32) | eax;
+		msr->written = true;
+	} else {
+		if (!msr->written)
+			if (read_msr(vcpu, msr->reg, &edx, &eax) < 0) {
+				return SHUTDOWN_UNHANDLED_EXIT_REASON;
+			}
+		else {
+			edx = (uint32_t)(vcpu->initial_count >> 32);
+			eax = (uint32_t)vcpu->initial_count;
+		}
+		vcpu->regs.tf_rax = set_low32(vcpu->regs.tf_rax, eax);
+		vcpu->regs.tf_rdx = set_low32(vcpu->regs.tf_rdx, edx);
 	}
 	return 0;
 }
