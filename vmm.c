@@ -681,22 +681,23 @@ fprintf(stderr, "%p %p %p %p\n", PGSIZE, PGSHIFT, PML1_SHIFT, PML1_PTE_REACH);
 
 
 	/* Put the e820 memory region information in the boot_params */
-	bp->e820_entries = 4;
-	bp->e820_map[0].addr = 0;
-	bp->e820_map[0].size = 16*1048576;
-	bp->e820_map[0].type = E820_RESERVED;
+	bp->e820_entries = 3;
+	int e820i = 0;
+	bp->e820_map[e820i].addr = 0;
+	bp->e820_map[e820i].size = 16*1048576;
+	bp->e820_map[e820i++].type = E820_RESERVED;
 
-	bp->e820_map[1].addr = 16*1048576;
-	bp->e820_map[1].size = 128*1048576;
-	bp->e820_map[1].type = E820_RAM;
+	bp->e820_map[e820i].addr = 16*1048576;
+	bp->e820_map[e820i].size = 128*1048576;
+	bp->e820_map[e820i++].type = E820_RAM;
 
-	bp->e820_map[2].addr = 4096*1048576;
-	bp->e820_map[2].size = 2*1048576;
-	bp->e820_map[2].type = E820_RAM;
+	//bp->e820_map[2].addr = 4096*1048576ULL;
+	//bp->e820_map[2].size = 2*1048576;
+	//bp->e820_map[2].type = E820_RAM;
 
-	bp->e820_map[3].addr = 0xf0000000;
-	bp->e820_map[3].size = 0x10000000;
-	bp->e820_map[3].type = E820_RESERVED;
+	bp->e820_map[e820i].addr = 0xf0000000;
+	bp->e820_map[e820i].size = 0x10000000;
+	bp->e820_map[e820i++].type = E820_RESERVED;
 
 
 

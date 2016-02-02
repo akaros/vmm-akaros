@@ -8,6 +8,8 @@
 
 #include <ros/vmm.h>
 
+#define static_assert(x)	switch (x) case 0: case (x):
+
 char *regname(uint8_t reg);
 int decode(struct vmctl *v, uint64_t *gpa, uint8_t *destreg, uint64_t **regp,
            int *store, int *size, int *advance);
