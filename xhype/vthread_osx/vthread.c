@@ -17,8 +17,8 @@ hv_return_t vm_init(struct virtual_machine const* vm) {
   err = hv_vm_map(vm->vm_mem, 0, vm->mem_size, vm->mem_flags);
   if (err) {
     print_red(
-        "cannot map guest physical address %x - %x to host virtual address %x"
-        "- %x, err = %x\n",
+        "cannot map guest physical address %p - %p to host virtual address %p"
+        "- %p, err = %x\n",
         0, vm->mem_size - 1, vm->vm_mem, vm->vm_mem + vm->mem_size - 1, err);
     abort();
   }
