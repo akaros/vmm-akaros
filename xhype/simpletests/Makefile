@@ -19,4 +19,4 @@ test_two_mmap: test_two_mmap.o utils.o
 
 .PHONY: clean
 clean:
-	rm -f $(obj) main
+	rm -f $(obj) test_two_vms_in_main_thread test_two_vms_in_two_threads test_two_vms_in_two_processes test_two_mmap
