@@ -28,7 +28,7 @@ int main() {
         err1);
   } else {
     print_green(
-        "map guest physical address %x - %x to host virtual address %x - %x\n",
+        "map guest physical address %x - %x to host virtual address %p - %p\n",
         0, MEM_REGION_SIZE - 1, mem_region1, mem_region1 + MEM_REGION_SIZE - 1);
   }
   hv_return_t err2 =
@@ -36,13 +36,13 @@ int main() {
                 HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC);
   if (err2) {
     print_red(
-        "cannot map guest physical address %x - %x to host virtual address %x "
-        "- %x, err = %x\n",
+        "cannot map guest physical address %x - %x to host virtual address %p "
+        "- %p, err = %x\n",
         MEM_REGION_SIZE, 2 * MEM_REGION_SIZE - 1, mem_region2,
         mem_region2 + MEM_REGION_SIZE - 1, err2);
   } else {
     print_green(
-        "map guest physical address %x - %x to host virtual address %x - %x\n",
+        "map guest physical address %x - %x to host virtual address %p - %p\n",
         MEM_REGION_SIZE, 2 * MEM_REGION_SIZE - 1, mem_region2,
         mem_region2 + MEM_REGION_SIZE - 1);
   }
