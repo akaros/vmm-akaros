@@ -50,3 +50,8 @@ According to Apple's document, `hv_vm_map()` will
 the guest's physical address. The second `hv_vm_map()` fails.~~
 
 Update: `hv_vm_unmap()` requires the addresses to be page aligned. The test passes after `MEM_REGION_SIZE` is changed to 4096.
+
+### Test hv_vcpu_create()
+
+The maximal number of vCPUs a single process can create is 32. The maximal 
+number of vCPUs a single thread can create is 1.
