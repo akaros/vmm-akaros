@@ -55,3 +55,8 @@ Update: `hv_vm_unmap()` requires the addresses to be page aligned. The test pass
 
 The maximal number of vCPUs a single process can create is 32. The maximal 
 number of vCPUs a single thread can create is 1.
+
+### Test hv_vm_space_create()
+
+The maximal number of virtual machine physical address spaces a single process
+can create is 64.
