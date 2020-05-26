@@ -39,12 +39,14 @@ According to Apple's document, `hv_vm_map()` will
 
 > maps a region in the virtual address space of the current task into the guest physical address space of the VM.
 
-However, similarly, it seems that `hv_vm_map()` can only be called once before
-`hv_vm_unmap()` . 
+~~However, similarly, it seems that `hv_vm_map()` can only be called once before
+`hv_vm_unmap()` .~~
 
 ``` shell
 ./test_two_mmap
 ```
 
-`test_two_mmap` tries mapping two regions of the host's virtual address to 
-the guest's physical address. The second `hv_vm_map()` fails.
+~~`test_two_mmap` tries mapping two regions of the host's virtual address to 
+the guest's physical address. The second `hv_vm_map()` fails.~~
+
+Update: `hv_vm_unmap()` requires the addresses to be page aligned. The test passes after `MEM_REGION_SIZE` is changed to 4096.
