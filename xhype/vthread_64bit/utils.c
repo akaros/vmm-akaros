@@ -230,11 +230,11 @@ void print_ept_vio_qualifi(uint64_t qual) {
   }
   if (qual & (1 << 7)) {
     printf("VALID,");
-    //     if (qual & (1 << 8)) {
-    //       printf("physical,");
-    //     } else {
-    //       printf("to a paging structure, ");
-    //     }
+        if (qual & (1 << 8)) {
+          printf("physical,");
+        } else {
+          printf("to a paging structure, ");
+        }
   } else {
     printf("INVALID, ");
   }

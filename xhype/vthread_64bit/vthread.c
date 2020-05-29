@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
+#include "paging.h"
 #include "utils.h"
 #include "vmexit_qual.h"
 #include "x86.h"
@@ -19,26 +20,29 @@ mach_vm_size_t h_text_size;
 mach_vm_size_t h_data1_size;
 mach_vm_size_t h_data2_size;
 
-uint8_t* bootstrap_mem;
+uint8_t* guest_identity_paging;
 
-struct gdte {
-  uint64_t low_limit : 16;
-  uint64_t low_base : 16;
-  uint64_t mid_base : 8;
-  uint64_t access : 8;
-  uint64_t granularity : 8;
-  uint64_t high_base : 8;
-};
+// the following codes are not necessary anymore
+// struct gdte {
+//   uint64_t low_limit : 16;
+//   uint64_t low_base : 16;
+//   uint64_t mid_base : 8;
+//   uint64_t access : 8;
+//   uint64_t granularity : 8;
+//   uint64_t high_base : 8;
+// };
 
-struct gdtr {
-  uint64_t limit : 16;
-  uint64_t base : 32;
-};
+// struct gdtr {
+//   uint64_t limit : 16;
+//   uint64_t base : 32;
+// };
 
-struct gdte* gdt;
-struct gdte* gdt64;
+// struct gdte* gdt;
+// struct gdte* gdt64;
 
 void vth_init() {
+  // use mach_vm_region() to get the starting address of current process's text
+  // and data
   mach_vm_size_t region_size;
   vm_region_basic_info_data_64_t info;
   mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
@@ -76,49 +80,89 @@ void vth_init() {
 
   GUARD(hv_vm_create(HV_VM_DEFAULT), HV_SUCCESS);
 
-  bootstrap_mem = valloc(5 * PAGE_SIZE);
-  bzero(bootstrap_mem, 5 * PAGE_SIZE);
-  // read the bootstrap to buffer
-  char* filename = "longmode";
-  struct stat fstat;
-  stat(filename, &fstat);
-  GUARD(fstat.st_size < PAGE_SIZE, true);
-  FILE* f = fopen(filename, "rb");
-  GUARD(fread(bootstrap_mem, fstat.st_size, 1, f), 1);
-  fclose(f);
-  //   bootstrap_mem[0] = 0xf4;
-  GUARD(hv_vm_map(bootstrap_mem, 0, 5 * PAGE_SIZE,
-                  HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC),
-        KERN_SUCCESS);
-  gdt = (struct gdte*)(bootstrap_mem + (fstat.st_size + 8) / 8 * 8);
-  gdt[2].low_limit = 0xffff;
-  gdt[2].access = 0x9a;
-  gdt[2].granularity = 0xcf;
-  gdt[3].low_limit = 0xffffU;
-  gdt[3].access = 0x92U;
-  gdt[3].granularity = 0xcfU;
-  // print_payload(gdt, 48);
+  // do an identity map from the guest's physical address to the host's virtual
+  // address
+  GUARD(hv_vm_map((uint8_t*)h_text_addr, h_text_addr, h_text_size,
+                  HV_MEMORY_READ | HV_MEMORY_EXEC),
+        HV_SUCCESS);
+  GUARD(hv_vm_map((uint8_t*)h_data1_addr, h_data1_addr, h_data1_size,
+                  HV_MEMORY_READ | HV_MEMORY_WRITE),
+        HV_SUCCESS);
+  GUARD(hv_vm_map((uint8_t*)h_data2_addr, h_data2_addr, h_data2_size,
+                  HV_MEMORY_READ | HV_MEMORY_WRITE),
+        HV_SUCCESS);
 
-  gdt64 = (struct gdte*)(bootstrap_mem + PAGE_SIZE - 4 * sizeof(struct gdte));
-  bzero(gdt64, 4 * sizeof(struct gdte));
-  gdt64[0].low_limit = 0xffff;
-  gdt64[0].granularity = 1;
-  gdt64[1].access = 0x9a;
-  gdt64[1].granularity = 0xaf;
-  gdt64[2].access = 0x92;
-  gdt64[2].granularity = 0;
-  struct gdtr* gdtreg = (struct gdtr*)&gdt64[3];
-  gdtreg->base = PAGE_SIZE - 4 * sizeof(struct gdte);
-  gdtreg->limit = 3 * 8 - 1;
-  // print_payload(gdt64, 4 * sizeof(struct gdte));
-  //   printf("%d\n", sizeof(*gdt));
+  // the following codes are not necessary any more.
+
+  // bootstrap_mem = valloc(5 * PAGE_SIZE);
+  // bzero(bootstrap_mem, 5 * PAGE_SIZE);
+
+  // read the bootstrap to buffer
+  // char* filename = "longmode";
+  // struct stat fstat;
+  // stat(filename, &fstat);
+  // GUARD(fstat.st_size < PAGE_SIZE, true);
+  // FILE* f = fopen(filename, "rb");
+  // GUARD(fread(bootstrap_mem, fstat.st_size, 1, f), 1);
+  // fclose(f);
+
+  // GUARD(hv_vm_map(bootstrap_mem, 0, 5 * PAGE_SIZE,
+  //                 HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC),
+  //       KERN_SUCCESS);
+  // gdt = (struct gdte*)(bootstrap_mem + (fstat.st_size + 8) / 8 * 8);
+  // gdt[2].low_limit = 0xffff;
+  // gdt[2].access = 0x9a;
+  // gdt[2].granularity = 0xcf;
+  // gdt[3].low_limit = 0xffffU;
+  // gdt[3].access = 0x92U;
+  // gdt[3].granularity = 0xcfU;
+
+  // gdt64 = (struct gdte*)(bootstrap_mem + PAGE_SIZE - 4 * sizeof(struct
+  // gdte)); bzero(gdt64, 4 * sizeof(struct gdte)); gdt64[0].low_limit = 0xffff;
+  // gdt64[0].granularity = 1;
+  // gdt64[1].access = 0x9a;
+  // gdt64[1].granularity = 0xaf;
+  // gdt64[2].access = 0x92;
+  // gdt64[2].granularity = 0;
+  // struct gdtr* gdtreg = (struct gdtr*)&gdt64[3];
+  // gdtreg->base = PAGE_SIZE - 4 * sizeof(struct gdte);
+  // gdtreg->limit = 3 * 8 - 1;
+
+  // page tables for the guest, we place page tables at the begining of the
+  // guest's physical address space, i.e., at physical address 0;
+  guest_identity_paging = valloc((1 + 512) * PAGE_SIZE);
+  GUARD(hv_vm_map(guest_identity_paging, 0, (1 + 512) * PAGE_SIZE,
+                  HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC),
+        HV_SUCCESS);
+
+  // settting up the page tables for the guest. Here we use 1GB pages for the
+  // guest.
+  // PML4 is placed at guest's physicall address 0x200_000
+  // We also have 512 PDPTs placed at guest's physical address 0x0 to 0x1ff_000
+  // respectively.
+  struct PML4E* pml4e =
+      (struct PML4E*)(guest_identity_paging + 512 * PAGE_SIZE);
+  for (int i = 0; i < 512; i += 1) {
+    pml4e[i].pres = 1;
+    pml4e[i].rw = 1;
+    pml4e[i].pdpt_base = i;
+    struct PDPTE_1GB* pdpte =
+        (struct PDPTE_1GB*)(guest_identity_paging + i * PAGE_SIZE);
+    for (int j = 0; j < 512; j += 1) {
+      pdpte[j].pres = 1;
+      pdpte[j].rw = 1;
+      pdpte[j].ps = 1;  // use 1GB page
+      pdpte[j].pg_base = (i << 9) + j;
+    }
+  }
 }
 
-void vcpu_unpaged_protected_mode(hv_vcpuid_t vcpu) {
+void vcpu_long_mode(hv_vcpuid_t vcpu) {
+  // setttup segment registers
   wvmcs(vcpu, VMCS_GUEST_CS, 0x10);
-  wvmcs(vcpu, VMCS_GUEST_CS_AR, 0xc09b);
+  wvmcs(vcpu, VMCS_GUEST_CS_AR, 0xa09b);  // Granularity, 64 bits flag
   wvmcs(vcpu, VMCS_GUEST_CS_LIMIT, 0xffffffff);
-  wvmcs(vcpu, VMCS_GUEST_CS_BASE, 0);
+  wvmcs(vcpu, VMCS_GUEST_CS_BASE, 0x0);
 
   wvmcs(vcpu, VMCS_GUEST_DS, 0x18);
   wvmcs(vcpu, VMCS_GUEST_DS_AR, 0xc093);
@@ -151,12 +195,12 @@ void vcpu_unpaged_protected_mode(hv_vcpuid_t vcpu) {
   wvmcs(vcpu, VMCS_GUEST_LDTR_BASE, 0);
 
   wvmcs(vcpu, VMCS_GUEST_TR, 0);
-  wvmcs(vcpu, VMCS_GUEST_TR_AR, 0x8b);  // AR_TYPE_BUSY_64_TSS
+  wvmcs(vcpu, VMCS_GUEST_TR_AR, 0x8b);
   wvmcs(vcpu, VMCS_GUEST_TR_LIMIT, 0);
   wvmcs(vcpu, VMCS_GUEST_TR_BASE, 0);
 
-  wvmcs(vcpu, VMCS_GUEST_GDTR_LIMIT, 0x1f);
-  wvmcs(vcpu, VMCS_GUEST_GDTR_BASE, (uint64_t)gdt - (uint64_t)bootstrap_mem);
+  wvmcs(vcpu, VMCS_GUEST_GDTR_LIMIT, 0x17);
+  wvmcs(vcpu, VMCS_GUEST_GDTR_BASE, 0xfe0);
 
   wvmcs(vcpu, VMCS_GUEST_IDTR_LIMIT, 0);
   wvmcs(vcpu, VMCS_GUEST_IDTR_BASE, 0);
@@ -171,23 +215,34 @@ void vcpu_unpaged_protected_mode(hv_vcpuid_t vcpu) {
         cap2ctrl(cap_cpu,
                  CPU_BASED_HLT | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE));
   wvmcs(vcpu, VMCS_CTRL_CPU_BASED2, cap2ctrl(cap_cpu2, CPU_BASED2_RDTSCP));
-  wvmcs(vcpu, VMCS_CTRL_VMENTRY_CONTROLS, cap2ctrl(cap_entry, 0));
+  wvmcs(vcpu, VMCS_CTRL_VMENTRY_CONTROLS,
+        cap2ctrl(cap_entry, VMENTRY_GUEST_IA32E));  // indicate that the guest
+                                                    // will be in 64bit mode
 
   wvmcs(vcpu, VMCS_CTRL_EXC_BITMAP, 0x40000);
 
-  uint64_t cr0 = X86_CR0_NE | X86_CR0_ET | X86_CR0_PE;
+  uint64_t cr0 = X86_CR0_NE | X86_CR0_ET | X86_CR0_PE;  // turn on protection
+  cr0 |= X86_CR0_PG;                                    // turn on pageing
   wvmcs(vcpu, VMCS_GUEST_CR0, cr0);
   wvmcs(vcpu, VMCS_CTRL_CR0_MASK, 0xe0000031);
   wvmcs(vcpu, VMCS_CTRL_CR0_SHADOW, cr0);
 
-  //   GUARD(hv_vcpu_enable_native_msr(vcpu, MSR_EFER, true), HV_SUCCESS);
+  // guest's physical address to its PML4
+  wvmcs(vcpu, VMCS_GUEST_CR3, 512 * PAGE_SIZE);
 
   uint64_t cr4 = X86_CR4_VMXE;
+  cr4 |= X86_CR4_PAE;  // turn on 64bit paging
   wvmcs(vcpu, VMCS_GUEST_CR4, cr4);
-  wvmcs(vcpu, VMCS_CTRL_CR4_MASK, 0x2000);
-  wvmcs(vcpu, VMCS_CTRL_CR4_SHADOW, cr4);
+  // make the guest unable to find it running in a virtual machine
+  wvmcs(vcpu, VMCS_CTRL_CR4_MASK, X86_CR4_VMXE);
+  wvmcs(vcpu, VMCS_CTRL_CR4_SHADOW, 0);
+
+  uint64_t efer = 0;
+  efer |= EFER_LME | EFER_LMA;  // turn on 64bit paging
+  wvmcs(vcpu, VMCS_GUEST_IA32_EFER, efer);
 }
 
+// Intel manuel, Volume 3, table 27-3
 uint64_t vmx_get_guest_reg(int vcpu, int ident) {
   switch (ident) {
     case 0:
@@ -232,6 +287,7 @@ void* vcpu_create_run(void* arg_vth) {
   hv_vcpuid_t vcpu;
   GUARD(hv_vcpu_create(&vcpu, HV_VCPU_DEFAULT), HV_SUCCESS);
 
+  // the following codes are crucial for turning 64bit for the guest.
   GUARD(hv_vcpu_enable_native_msr(vcpu, MSR_LSTAR, 1), HV_SUCCESS);
   GUARD(hv_vcpu_enable_native_msr(vcpu, MSR_CSTAR, 1), HV_SUCCESS);
   GUARD(hv_vcpu_enable_native_msr(vcpu, MSR_STAR, 1), HV_SUCCESS);
@@ -245,14 +301,27 @@ void* vcpu_create_run(void* arg_vth) {
   GUARD(hv_vcpu_enable_native_msr(vcpu, MSR_TSC, 1), HV_SUCCESS);
   GUARD(hv_vcpu_enable_native_msr(vcpu, MSR_IA32_TSC_AUX, 1), HV_SUCCESS);
 
-  vcpu_unpaged_protected_mode(vcpu);
+  vcpu_long_mode(vcpu);
 
-  wreg(vcpu, HV_X86_RIP, 0);
+  // allocate memory for the virutl thread's stack
+  size_t vth_stack_size = 8 * PAGE_SIZE;
+  mach_vm_address_t vth_stack;
+
+  mach_vm_allocate(mach_task_self(), &vth_stack, vth_stack_size,
+                   VM_FLAGS_ANYWHERE);
+  // uint8_t* vth_stack = valloc(vth_stack_size);
+  GUARD(hv_vm_map((void*)vth_stack, vth_stack, vth_stack_size,
+                  HV_MEMORY_READ | HV_MEMORY_WRITE),
+        HV_SUCCESS);
+  printf("vth_stack top = 0x%llx\n", vth_stack + vth_stack_size - 1);
+  // printf("vth-entry = %p\n", vth->entry);
+  // set the guest's rip to the starting position of the code entry
+  wreg(vcpu, HV_X86_RIP, (uint64_t)(vth->entry));
   wreg(vcpu, HV_X86_RFLAGS, 0x2);
+  // set the guest's rsp to the top address of its stack
+  wreg(vcpu, HV_X86_RSP, (uint64_t)(vth_stack + vth_stack_size));
 
-  //   printf("bitmap msr=%llx, %llx\n", rvmcs(vcpu, vmcs_ctr))
-  hvdump(vcpu);
-
+  // temporarily limit number of iterations to 10
   for (int i = 0; i < 10; i += 1) {
     printf("\n");
     hv_return_t err = hv_vcpu_run(vcpu);
@@ -282,26 +351,24 @@ void* vcpu_create_run(void* arg_vth) {
         cr3, bp, sp, ip, rax, rbx, rcx, efer_g);
     printf("gla=0x%llx, gpa=0x%llx\n", gla, gpa);
     printf("instruction:\n");
-    print_payload(bootstrap_mem + ip, 16);
-    // printf("stack:\n");
-    // uint8_t* guest_sp_h =
-    //     vm_stack_h + (sp - (host_text_size + host_bss_size +
-    //     host_data_size));
-    // uint8_t* guest_stack_top_h = vm_stack_h + vm_stack_size;
-    // print_payload(guest_sp_h, guest_stack_top_h - guest_sp_h);
-    // print_payload((uint8_t*)vm_text_addr + (gla - VM_PHYS_TEXT), 2);
+    print_payload((void*)ip, 16);
+    printf("stack:\n");
+    print_payload((void*)sp, vth_stack + vth_stack_size - sp);
+
     printf("exit_reason = ");
     if (exit_reason == VMX_REASON_HLT) {
       print_red("VMX_REASON_HLT\n");
       break;
     } else if (exit_reason == VMX_REASON_IRQ) {
       printf("VMX_REASON_IRQ\n");
+      continue;
     } else if (exit_reason == VMX_REASON_EPT_VIOLATION) {
       printf("VMX_REASON_EPT_VIOLATION\n");
       print_ept_vio_qualifi(qual);
       continue;
     } else if (exit_reason == VMX_REASON_MOV_CR) {
       printf("VMX_REASON_MOV_CR\n");
+      // the host will simulate the cr access for the host
       struct vmexit_qual_cr* qual_cr = (struct vmexit_qual_cr*)&qual;
       if (qual_cr->cr_num == 0) {
         if (qual_cr->type == VMEXIT_QUAL_CR_TYPE_MOVETO) {
@@ -329,7 +396,6 @@ void* vcpu_create_run(void* arg_vth) {
           wvmcs(vcpu, VMCS_CTRL_CR4_SHADOW, regval);
           wvmcs(vcpu, VMCS_GUEST_CR4, regval);
           printf("update cr4 to %llx\n", regval);
-          //   uint64_t efer = rvmcs(vcpu, VMCS_GUEST_IA32_EFER);
         } else {
           print_red("qual_cr->type = %llx\n", qual_cr->type);
           abort();
@@ -338,12 +404,6 @@ void* vcpu_create_run(void* arg_vth) {
         print_red("access cr8\n");
         abort();
       }
-      //   uint64_t reg_num = qual & 0xf;
-      //   if (qual_cr->cr_num == 0) {
-      //     if (qual)
-      //     } else if (reg_num == 4) {
-      //   } else if (reg_num == 8) {
-      //   }
     } else if (exit_reason == VMX_REASON_RDMSR) {
       printf("VMX_REASON_RDMSR\n");
       if (rcx == MSR_EFER) {
@@ -371,8 +431,13 @@ void* vcpu_create_run(void* arg_vth) {
       printf("other unhandled VMEXIT (%lld)\n", exit_reason);
       break;
     }
+    // advance the instrunction pointer by exit_instr_len, since the host have
+    // done the instruction for the guest
     wvmcs(vcpu, VMCS_GUEST_RIP, ip + exit_instr_len);
   };
+  hvdump(vcpu);
+  GUARD(hv_vcpu_destroy(vcpu), HV_SUCCESS);
+  mach_vm_deallocate(mach_task_self(), vth_stack, vth_stack_size);
   return NULL;
 }
 
@@ -381,7 +446,7 @@ struct vthread* vthread_create(void* entry, void* arg) {
   struct vthread* vth = (struct vthread*)malloc(sizeof(struct vthread));
   vth->entry = entry;
   pthread_t pth;
-  pthread_create(&pth, NULL, vcpu_create_run, entry);
+  pthread_create(&pth, NULL, vcpu_create_run, vth);
   vth->pth = pth;
   return vth;
 }
