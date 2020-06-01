@@ -98,3 +98,27 @@ struct PTE {
   uint64_t ign2 : 11;
   uint64_t xd : 1;
 };
+
+struct linear_addr_4kb_t {
+  uint64_t offset : 12;
+  uint64_t pt : 9;
+  uint64_t pd : 9;
+  uint64_t pdpt : 9;
+  uint64_t pml4 : 9;
+  uint64_t empty : 16;
+};
+
+struct linear_addr_2mb_t {
+  uint64_t offset : 21;
+  uint64_t pd : 9;
+  uint64_t pdpt : 9;
+  uint64_t pml4 : 9;
+  uint64_t empty : 16;
+};
+
+struct linear_addr_1gb_t {
+  uint64_t offset : 30;
+  uint64_t pdpt : 9;
+  uint64_t pml4 : 9;
+  uint64_t empty : 16;
+};

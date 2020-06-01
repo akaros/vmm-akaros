@@ -1,10 +1,15 @@
+#ifndef __UTILS_H__
+#define __UTILS_H__
+
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_arch_vmx.h>
 #include <Hypervisor/hv_vmx.h>
 #include <stdlib.h>
-
-void print_green(char* msg, ...);
-void print_red(char* msg, ...);
+#ifdef __cplusplus
+extern "C" {
+#endif
+void print_green(const char* msg, ...);
+void print_red(const char* msg, ...);
 void print_payload(const void* payload, int len);
 void guard(int n);
 
@@ -16,13 +21,14 @@ void guard(int n);
 // }
 // }
 
-#define GUARD(x, r)                      \
-  {                                      \
-    uint64_t ret = (uint64_t)(x);        \
-    if (ret != r) {                      \
-      print_red("%s = %llx\n", #x, ret); \
-      exit(1);                           \
-    }                                    \
+#define GUARD(x, r)                                     \
+  {                                                     \
+    uint64_t ret = (uint64_t)(x);                       \
+    if (ret != r) {                                     \
+      const char* comd = #x;                            \
+      print_red("%s = %llx, not %llx\n", comd, ret, r); \
+      exit(1);                                          \
+    }                                                   \
   }
 
 void print_ept_vio_qualifi(uint64_t qual);
@@ -32,13 +38,19 @@ void wreg(hv_vcpuid_t vcpu, hv_x86_reg_t reg, uint64_t v);
 uint64_t rvmcs(hv_vcpuid_t vcpu, uint32_t field);
 void wvmcs(hv_vcpuid_t vcpu, uint32_t field, uint64_t v);
 void hvdump(int vcpu);
-
+uint64_t simulate_paging(uint64_t cr3, uint8_t* guest_mem, uint64_t gva);
 uint64_t cap2ctrl(uint64_t cap, uint64_t ctrl);
+void print_bits(uint64_t num, int bits);
+void print_exception_info(uint32_t info, uint64_t code);
 
 #define MUST1 2
 #define MUST0 1
 #define SUCC 0
+#ifdef __cplusplus
+}
+#endif
 
+#endif
 // #define WVMCS_0CAP(vcpu, cap_field, cpu_cap, value)        \
 //   {                                                        \
 //     int ret = wvmcs_0cap(vcpu, cap_field, cpu_cap, value); \

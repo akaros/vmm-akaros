@@ -11,12 +11,66 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "vmcs.h"
 
 /* desired control word constrained by hardware/hypervisor capabilities */
 uint64_t cap2ctrl(uint64_t cap, uint64_t ctrl) {
   return (ctrl | (cap & 0xffffffff)) & (cap >> 32);
+}
+
+struct gva_t {
+  uint64_t offset : 12;
+  uint64_t table : 9;
+  uint64_t dir : 9;
+  uint64_t dir_p : 9;
+  uint64_t pml4 : 9;
+  uint64_t empty : 16;
+};
+
+uint64_t simulate_paging(uint64_t cr3, uint8_t *guest_mem, uint64_t gva) {
+  printf("gva = %llx\n", gva);
+  struct gva_t gvaddr;
+  uint64_t gpa;
+  memcpy(&gvaddr, &gva, sizeof(gvaddr));
+  uint64_t pml4e = ((uint64_t *)(guest_mem + ((cr3 >> 12) << 12)))[gvaddr.pml4];
+  if ((pml4e & 1) == 0) {
+    printf("pdpt does not exit\n");
+    return 0;
+  } else {
+    printf("pml4e = %llx\n", pml4e);
+  }
+  uint64_t pdpte =
+      ((uint64_t *)(guest_mem + ((pml4e >> 12) << 12)))[gvaddr.dir_p];
+  if ((pdpte & 1) == 0) {
+    printf("pde does not exit\n");
+    return 0;
+  } else {
+    printf("pdpte = %llx\n", pdpte);
+  }
+  if ((pdpte & (1 << 7))) {
+    gpa = ((pdpte >> 30ULL) << 30ULL) + (gva & 0x3FFFFFFF);
+    printf("1GB paging, base = %llx, offset=%llx, gpa = %llx\n",
+           (pdpte >> 30) << 30, gva & 0x3FFFFFFF, gpa);
+    return gpa;
+  }
+  uint64_t pde = ((uint64_t *)(guest_mem + ((pdpte >> 12) << 12)))[gvaddr.dir];
+  if ((pde & 1) == 0) {
+    printf("pte  does not exit\n");
+    return 0;
+  }
+  if ((pde & (1 << 7))) {
+    gpa = ((pde >> 21) << 21) + (gva & 0x1fffff);
+    return gpa;
+  }
+  uint64_t pte = ((uint64_t *)(guest_mem + ((pde >> 12) << 12)))[gvaddr.table];
+  if ((pte & 1) == 0) {
+    printf("page does not exit\n");
+    return 0;
+  }
+  gpa = ((pte >> 12) << 12) + gvaddr.offset;
+  return gpa;
 }
 
 // #define MUST1 2
@@ -230,18 +284,18 @@ void print_ept_vio_qualifi(uint64_t qual) {
   }
   if (qual & (1 << 7)) {
     printf("VALID,");
-        if (qual & (1 << 8)) {
-          printf("physical,");
-        } else {
-          printf("to a paging structure, ");
-        }
+    if (qual & (1 << 8)) {
+      printf("physical,");
+    } else {
+      printf("to a paging structure, ");
+    }
   } else {
     printf("INVALID, ");
   }
   printf("\n");
 }
 
-void print_green(char *msg, ...) {
+void print_green(const char *msg, ...) {
   fprintf(stdout, "\033[32m");
   va_list argp;
 
@@ -251,7 +305,7 @@ void print_green(char *msg, ...) {
   fprintf(stdout, "\033[0m");
 }
 
-void print_red(char *msg, ...) {
+void print_red(const char *msg, ...) {
   fprintf(stdout, "\033[0;31m");
   va_list argp;
 
@@ -355,4 +409,40 @@ void print_payload(const void *payload, int len) {
   }
 
   return;
+}
+
+void print_bits(uint64_t num, int bits) {
+  for (int i = bits; i >= 0; i -= 1) {
+    printf("%3d ", i);
+  }
+  printf("\n");
+  for (int i = bits; i >= 0; i -= 1) {
+    printf("%3d ", (num & (1 << i)) > 0);
+  }
+  printf("\n");
+}
+
+void print_exception_info(uint32_t info, uint64_t code) {
+  uint8_t low8 = info;
+  if (low8 == 2) {
+    printf("NMI, ");
+  } else {
+    printf("vector = %d, ", low8);
+  }
+  uint8_t bits10_8 = (info >> 8) & 0x7;
+  char *bits10_8_info[] = {"external interrupt",
+                           "",
+                           "non-maskabel interrupt",
+                           "hardware exception",
+                           "",
+                           "previleged",
+                           "software"};
+  printf("%s, ", bits10_8_info[bits10_8]);
+  if (info & (1 << 11)) {
+    printf("error code, %llx, %llu", code, code);
+  }
+  if (info & (1 << 12)) {
+    printf("NMI unblocking due to IRET,");
+  }
+  printf("\n");
 }

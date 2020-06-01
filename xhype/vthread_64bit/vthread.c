@@ -7,20 +7,26 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
+#include "identity_map.h"
 #include "paging.h"
 #include "utils.h"
 #include "vmexit_qual.h"
+#include "vthread_hlt.h"
 #include "x86.h"
 
-mach_vm_address_t h_text_addr;
-mach_vm_address_t h_data1_addr;
-mach_vm_address_t h_data2_addr;
+#define GUEST_STACK_SIZE (8 * PAGE_SIZE)
 
-mach_vm_size_t h_text_size;
-mach_vm_size_t h_data1_size;
-mach_vm_size_t h_data2_size;
+mach_vm_address_t guest_stack_addr;
 
-uint8_t* guest_identity_paging;
+// mach_vm_address_t h_text_addr;
+// mach_vm_address_t h_data1_addr;
+// mach_vm_address_t h_data2_addr;
+
+// mach_vm_size_t h_text_size;
+// mach_vm_size_t h_data1_size;
+// mach_vm_size_t h_data2_size;
+
+// uint8_t* guest_identity_paging;
 
 // the following codes are not necessary anymore
 // struct gdte {
@@ -41,56 +47,63 @@ uint8_t* guest_identity_paging;
 // struct gdte* gdt64;
 
 void vth_init() {
+  GUARD(hv_vm_create(HV_VM_DEFAULT), HV_SUCCESS);
+  uint64_t num_stack;
+  GUARD(hv_capability(HV_CAP_VCPUMAX, &num_stack), HV_SUCCESS);
+  GUARD(mach_vm_allocate(mach_task_self(), &guest_stack_addr,
+                         num_stack * GUEST_STACK_SIZE, VM_FLAGS_ANYWHERE),
+        KERN_SUCCESS);
+  setup_identity_map();
   // use mach_vm_region() to get the starting address of current process's text
   // and data
-  mach_vm_size_t region_size;
-  vm_region_basic_info_data_64_t info;
-  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-  mach_port_t object;
+  // mach_vm_size_t region_size;
+  // vm_region_basic_info_data_64_t info;
+  // mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+  // mach_port_t object;
 
-  mach_vm_address_t trial_addr = 1;
-  GUARD(mach_vm_region(current_task(), &trial_addr, &region_size,
-                       VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count,
-                       &object),
-        KERN_SUCCESS);
-  h_text_addr = trial_addr;
-  h_text_size = region_size;
+  // mach_vm_address_t trial_addr = 1;
+  // GUARD(mach_vm_region(current_task(), &trial_addr, &region_size,
+  //                      VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count,
+  //                      &object),
+  //       KERN_SUCCESS);
+  // h_text_addr = trial_addr;
+  // h_text_size = region_size;
 
-  trial_addr += region_size;
-  GUARD(mach_vm_region(current_task(), &trial_addr, &region_size,
-                       VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count,
-                       &object),
-        KERN_SUCCESS);
-  h_data1_addr = trial_addr;
-  h_data1_size = region_size;
+  // trial_addr += region_size;
+  // GUARD(mach_vm_region(current_task(), &trial_addr, &region_size,
+  //                      VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count,
+  //                      &object),
+  //       KERN_SUCCESS);
+  // h_data1_addr = trial_addr;
+  // h_data1_size = region_size;
 
-  trial_addr += region_size;
-  GUARD(mach_vm_region(current_task(), &trial_addr, &region_size,
-                       VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count,
-                       &object),
-        KERN_SUCCESS);
-  h_data2_addr = trial_addr;
-  h_data2_size = region_size;
+  // trial_addr += region_size;
+  // GUARD(mach_vm_region(current_task(), &trial_addr, &region_size,
+  //                      VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count,
+  //                      &object),
+  //       KERN_SUCCESS);
+  // h_data2_addr = trial_addr;
+  // h_data2_size = region_size;
 
-  printf(
-      "host text: %llx, %lld page, data1: %llx, %lld page, data2: %llx, %lld "
-      "page\n",
-      h_text_addr, h_text_size >> 12, h_data1_addr, h_data1_size >> 12,
-      h_data2_addr, h_data2_size >> 12);
+  // printf(
+  //     "host text: %llx, %lld page, data1: %llx, %lld page, data2: %llx, %lld
+  //     " "page\n", h_text_addr, h_text_size >> 12, h_data1_addr, h_data1_size
+  //     >> 12, h_data2_addr, h_data2_size >> 12);
 
-  GUARD(hv_vm_create(HV_VM_DEFAULT), HV_SUCCESS);
+  // GUARD(hv_vm_create(HV_VM_DEFAULT), HV_SUCCESS);
 
-  // do an identity map from the guest's physical address to the host's virtual
-  // address
-  GUARD(hv_vm_map((uint8_t*)h_text_addr, h_text_addr, h_text_size,
-                  HV_MEMORY_READ | HV_MEMORY_EXEC),
-        HV_SUCCESS);
-  GUARD(hv_vm_map((uint8_t*)h_data1_addr, h_data1_addr, h_data1_size,
-                  HV_MEMORY_READ | HV_MEMORY_WRITE),
-        HV_SUCCESS);
-  GUARD(hv_vm_map((uint8_t*)h_data2_addr, h_data2_addr, h_data2_size,
-                  HV_MEMORY_READ | HV_MEMORY_WRITE),
-        HV_SUCCESS);
+  // // do an identity map from the guest's physical address to the host's
+  // virtual
+  // // address
+  // GUARD(hv_vm_map((uint8_t*)h_text_addr, h_text_addr, h_text_size,
+  //                 HV_MEMORY_READ | HV_MEMORY_EXEC),
+  //       HV_SUCCESS);
+  // GUARD(hv_vm_map((uint8_t*)h_data1_addr, h_data1_addr, h_data1_size,
+  //                 HV_MEMORY_READ | HV_MEMORY_WRITE),
+  //       HV_SUCCESS);
+  // GUARD(hv_vm_map((uint8_t*)h_data2_addr, h_data2_addr, h_data2_size,
+  //                 HV_MEMORY_READ | HV_MEMORY_WRITE),
+  //       HV_SUCCESS);
 
   // the following codes are not necessary any more.
 
@@ -130,31 +143,31 @@ void vth_init() {
 
   // page tables for the guest, we place page tables at the begining of the
   // guest's physical address space, i.e., at physical address 0;
-  guest_identity_paging = valloc((1 + 512) * PAGE_SIZE);
-  GUARD(hv_vm_map(guest_identity_paging, 0, (1 + 512) * PAGE_SIZE,
-                  HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC),
-        HV_SUCCESS);
+  // guest_identity_paging = valloc((1 + 512) * PAGE_SIZE);
+  // GUARD(hv_vm_map(guest_identity_paging, 0, (1 + 512) * PAGE_SIZE,
+  //                 HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC),
+  //       HV_SUCCESS);
 
   // settting up the page tables for the guest. Here we use 1GB pages for the
   // guest.
   // PML4 is placed at guest's physicall address 0x200_000
   // We also have 512 PDPTs placed at guest's physical address 0x0 to 0x1ff_000
   // respectively.
-  struct PML4E* pml4e =
-      (struct PML4E*)(guest_identity_paging + 512 * PAGE_SIZE);
-  for (int i = 0; i < 512; i += 1) {
-    pml4e[i].pres = 1;
-    pml4e[i].rw = 1;
-    pml4e[i].pdpt_base = i;
-    struct PDPTE_1GB* pdpte =
-        (struct PDPTE_1GB*)(guest_identity_paging + i * PAGE_SIZE);
-    for (int j = 0; j < 512; j += 1) {
-      pdpte[j].pres = 1;
-      pdpte[j].rw = 1;
-      pdpte[j].ps = 1;  // use 1GB page
-      pdpte[j].pg_base = (i << 9) + j;
-    }
-  }
+  // struct PML4E* pml4e =
+  //     (struct PML4E*)(guest_identity_paging + 512 * PAGE_SIZE);
+  // for (int i = 0; i < 512; i += 1) {
+  //   pml4e[i].pres = 1;
+  //   pml4e[i].rw = 1;
+  //   pml4e[i].pdpt_base = i;
+  //   struct PDPTE_1GB* pdpte =
+  //       (struct PDPTE_1GB*)(guest_identity_paging + i * PAGE_SIZE);
+  //   for (int j = 0; j < 512; j += 1) {
+  //     pdpte[j].pres = 1;
+  //     pdpte[j].rw = 1;
+  //     pdpte[j].ps = 1;  // use 1GB page
+  //     pdpte[j].pg_base = (i << 9) + j;
+  //   }
+  // }
 }
 
 void vcpu_long_mode(hv_vcpuid_t vcpu) {
@@ -219,18 +232,20 @@ void vcpu_long_mode(hv_vcpuid_t vcpu) {
         cap2ctrl(cap_entry, VMENTRY_GUEST_IA32E));  // indicate that the guest
                                                     // will be in 64bit mode
 
-  wvmcs(vcpu, VMCS_CTRL_EXC_BITMAP, 0x40000);
+  wvmcs(vcpu, VMCS_CTRL_EXC_BITMAP, 0xffffffff);
 
   uint64_t cr0 = X86_CR0_NE | X86_CR0_ET | X86_CR0_PE;  // turn on protection
   cr0 |= X86_CR0_PG;                                    // turn on pageing
   wvmcs(vcpu, VMCS_GUEST_CR0, cr0);
   wvmcs(vcpu, VMCS_CTRL_CR0_MASK, 0xe0000031);
   wvmcs(vcpu, VMCS_CTRL_CR0_SHADOW, cr0);
+  printf("cr0 =\n");
+  print_bits(rvmcs(vcpu, VMCS_GUEST_CR0), 32);
 
   // guest's physical address to its PML4
-  wvmcs(vcpu, VMCS_GUEST_CR3, 512 * PAGE_SIZE);
+  wvmcs(vcpu, VMCS_GUEST_CR3, 0);
 
-  uint64_t cr4 = X86_CR4_VMXE;
+  uint64_t cr4 = X86_CR4_VMXE | X86_CR4_OSFXSR | X86_CR4_OSXSAVE;
   cr4 |= X86_CR4_PAE;  // turn on 64bit paging
   wvmcs(vcpu, VMCS_GUEST_CR4, cr4);
   // make the guest unable to find it running in a virtual machine
@@ -304,25 +319,32 @@ void* vcpu_create_run(void* arg_vth) {
   vcpu_long_mode(vcpu);
 
   // allocate memory for the virutl thread's stack
-  size_t vth_stack_size = 8 * PAGE_SIZE;
-  mach_vm_address_t vth_stack;
+  // size_t vth_stack_size = 8 * PAGE_SIZE;
+  // mach_vm_address_t vth_stack;
 
-  mach_vm_allocate(mach_task_self(), &vth_stack, vth_stack_size,
-                   VM_FLAGS_ANYWHERE);
+  // mach_vm_allocate(mach_task_self(), &vth_stack, vth_stack_size,
+  //  VM_FLAGS_ANYWHERE);
   // uint8_t* vth_stack = valloc(vth_stack_size);
-  GUARD(hv_vm_map((void*)vth_stack, vth_stack, vth_stack_size,
-                  HV_MEMORY_READ | HV_MEMORY_WRITE),
-        HV_SUCCESS);
-  printf("vth_stack top = 0x%llx\n", vth_stack + vth_stack_size - 1);
+  // GUARD(hv_vm_map((void*)vth_stack, vth_stack, vth_stack_size,
+  // HV_MEMORY_READ | HV_MEMORY_WRITE),
+  // HV_SUCCESS);
+  bzero((void*)(guest_stack_addr + vcpu * GUEST_STACK_SIZE), GUEST_STACK_SIZE);
   // printf("vth-entry = %p\n", vth->entry);
   // set the guest's rip to the starting position of the code entry
   wreg(vcpu, HV_X86_RIP, (uint64_t)(vth->entry));
   wreg(vcpu, HV_X86_RFLAGS, 0x2);
   // set the guest's rsp to the top address of its stack
-  wreg(vcpu, HV_X86_RSP, (uint64_t)(vth_stack + vth_stack_size));
+  // -8 is to simulate the return address at the stack top
+  // necessary for movdqa, otherwise $GP is generated since RSP is not 16-byte
+  // aligned
+  uint64_t guest_stack_top =
+      guest_stack_addr + (vcpu + 1) * GUEST_STACK_SIZE - 8;
+  *(uint64_t*)guest_stack_top = (uint64_t)
+      vthread_hlt;  // put the hlt function at the stack top as return address
+  wreg(vcpu, HV_X86_RSP, guest_stack_top);
 
   // temporarily limit number of iterations to 10
-  for (int i = 0; i < 10; i += 1) {
+  for (int i = 0; i < 200; i += 1) {
     printf("\n");
     hv_return_t err = hv_vcpu_run(vcpu);
     if (err) {
@@ -341,22 +363,39 @@ void* vcpu_create_run(void* arg_vth) {
     uint64_t rbx = rreg(vcpu, HV_X86_RBX);
     uint64_t rcx = rreg(vcpu, HV_X86_RCX);
     uint64_t rdx = rreg(vcpu, HV_X86_RDX);
+    uint64_t rdi = rreg(vcpu, HV_X86_RDI);
     uint64_t gla = rvmcs(vcpu, VMCS_RO_GUEST_LIN_ADDR);
     uint64_t gpa = rvmcs(vcpu, VMCS_GUEST_PHYSICAL_ADDRESS);
     uint64_t cr3 = rvmcs(vcpu, VMCS_GUEST_CR3);
     uint64_t efer_g = rvmcs(vcpu, VMCS_GUEST_IA32_EFER);
     printf(
         "cr3 = %llx, bp = 0x%llx, sp=0x%llx, ip=0x%llx, rax=0x%llx, "
-        "rbx=0x%llx, rcx=0x%llx, efer = %llx\n",
-        cr3, bp, sp, ip, rax, rbx, rcx, efer_g);
+        "rbx=0x%llx, rcx=0x%llx, efer = %llx, rdi=%llx\n",
+        cr3, bp, sp, ip, rax, rbx, rcx, efer_g, rdi);
+    // if (rdi != 0) {
+    //   printf("(rdi) = %x\n", *(int*)rdi);
+    // }
     printf("gla=0x%llx, gpa=0x%llx\n", gla, gpa);
     printf("instruction:\n");
-    print_payload((void*)ip, 16);
-    printf("stack:\n");
-    print_payload((void*)sp, vth_stack + vth_stack_size - sp);
+    print_payload((char*)ip, exit_instr_len);
+    print_payload((char*)ip + exit_instr_len, 16);
+    // printf("stack:\n");
+    // print_payload((void*)sp, guest_stack_top - sp);
 
     printf("exit_reason = ");
-    if (exit_reason == VMX_REASON_HLT) {
+    if (exit_reason == VMX_REASON_EXC_NMI) {
+      printf("VMX_REASON_EXC_NMI\n");
+      uint32_t info = rvmcs(vcpu, VMCS_RO_VMEXIT_IRQ_INFO);
+      uint64_t code = rvmcs(vcpu, VMCS_RO_VMEXIT_IRQ_ERROR);
+      print_bits(info, 32);
+      // print_bits(code, 32);
+      print_exception_info(info, code);
+      printf("code:\n");
+      print_payload((char*)ip - 64, 64);
+      printf("\n");
+      print_payload((char*)ip, 32);
+      break;
+    } else if (exit_reason == VMX_REASON_HLT) {
       print_red("VMX_REASON_HLT\n");
       break;
     } else if (exit_reason == VMX_REASON_IRQ) {
@@ -435,9 +474,8 @@ void* vcpu_create_run(void* arg_vth) {
     // done the instruction for the guest
     wvmcs(vcpu, VMCS_GUEST_RIP, ip + exit_instr_len);
   };
-  hvdump(vcpu);
+  // hvdump(vcpu);
   GUARD(hv_vcpu_destroy(vcpu), HV_SUCCESS);
-  mach_vm_deallocate(mach_task_self(), vth_stack, vth_stack_size);
   return NULL;
 }
 

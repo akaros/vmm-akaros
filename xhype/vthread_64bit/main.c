@@ -1,39 +1,53 @@
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
+#include "change.h"
 #include "utils.h"
 #include "vthread.h"
 
+#define TESTSTR "HAPPY"
+
 int a = 1;
 int b = 2;
+size_t len;
 
-int negate(int num) { return -num; }
-
-void* add_a(void) {
-  a = negate(a);
-  __asm__("hlt\n");
+void* calc_len(void) {
+  len = strlen(TESTSTR);
+  // __asm__("hlt\n"); // not necessary
   return NULL;
 }
 
-void* add_b(void) {
-  b += 133;
-  __asm__("hlt\n");
+void* add_a(void) {
+  b += a;
+  // __asm__("hlt\n");
+  return NULL;
+}
+
+uint8_t str_copy[32];
+
+void* copy_str(void) {
+  memcpy(str_copy, TESTSTR, strlen(TESTSTR) + 1);
+
+  // __asm__("hlt\n");
   return NULL;
 }
 
 int main() {
   vth_init();
 
-  printf("a = %d\n", a);
-  printf("b = %d\n", b);
-  struct vthread* vth = vthread_create(add_b, NULL);
-  struct vthread* vth2 = vthread_create(add_a, NULL);
+  struct vthread* vth1 = vthread_create(add_a, NULL);
+  struct vthread* vth2 = vthread_create(copy_str, NULL);
+  struct vthread* vth3 = vthread_create(calc_len, NULL);
 
-  vthread_join(vth, NULL);
+  vthread_join(vth1, NULL);
   vthread_join(vth2, NULL);
-  printf("after vthread_join, a = %d, b = %d\n", a, b);
-  assert(a == -1);
-  assert(b == 135);
+  vthread_join(vth3, NULL);
+
+  assert(b == 3);
+  assert(len = strlen(TESTSTR));
+  assert(memcmp(TESTSTR, str_copy, len) == 0);
+  printf("b=%d, len=%d, str_copy=%s\n", b, len, str_copy);
   return 0;
 }
