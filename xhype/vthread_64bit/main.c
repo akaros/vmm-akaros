@@ -21,6 +21,7 @@ void* calc_len(void) {
 
 void* add_a(void) {
   b += a;
+  double_num(&b);
   // __asm__("hlt\n");
   return NULL;
 }
@@ -45,9 +46,9 @@ int main() {
   vthread_join(vth2, NULL);
   vthread_join(vth3, NULL);
 
-  assert(b == 3);
-  assert(len = strlen(TESTSTR));
+  assert(b == 6);
+  assert(len == strlen(TESTSTR));
   assert(memcmp(TESTSTR, str_copy, len) == 0);
-  printf("b=%d, len=%d, str_copy=%s\n", b, len, str_copy);
+  printf("b=%d, len=%zu, str_copy=%s\n", b, len, str_copy);
   return 0;
 }
