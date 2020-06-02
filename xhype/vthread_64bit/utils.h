@@ -50,6 +50,15 @@ void print_exception_info(uint32_t info, uint64_t code);
 }
 #endif
 
+struct interrupt_info {
+  uint32_t vector : 8;
+  uint32_t type : 3;
+  uint32_t code_valid : 1;
+  uint32_t nmi : 1;
+  uint32_t reserved : 18;
+  uint32_t valid : 1;
+};
+
 #endif
 // #define WVMCS_0CAP(vcpu, cap_field, cpu_cap, value)        \
 //   {                                                        \

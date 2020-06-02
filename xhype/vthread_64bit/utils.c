@@ -265,14 +265,15 @@ void hvdump(int vcpu) {
 }
 
 void print_ept_vio_qualifi(uint64_t qual) {
-  for (int i = 12; i >= 0; i -= 1) {
-    if (qual & (1 << i)) {
-      printf("1");
-    } else {
-      printf("0");
-    }
-  }
-  printf(", ");
+  //   print_bits(qual, 64);
+  //   for (int i = 12; i >= 0; i -= 1) {
+  //     if (qual & (1 << i)) {
+  //       printf("1");
+  //     } else {
+  //       printf("0");
+  //     }
+  //   }
+  //   printf("\n");
   if (qual & (1 << 0)) {
     printf("READ, ");
   }

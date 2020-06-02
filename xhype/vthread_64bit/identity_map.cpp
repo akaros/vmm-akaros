@@ -2,6 +2,7 @@
 
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <pthread.h>
 
 #include <map>
 #include <vector>
@@ -213,4 +214,82 @@ bool setup_identity_map() {
   }
 #endif
   return true;
+}
+
+uint8_t* guest_paging_data;
+int available_pg = 1;
+uint64_t guest_available_addr = OneGB;
+
+void setup_pml4() {
+  guest_paging_data = (uint8_t*)valloc(TwoMB);
+  GUARD(hv_vm_map(guest_paging_data, 0, TwoMB,
+                  HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC),
+        HV_SUCCESS);
+}
+
+pthread_mutex_t mapping_lock = PTHREAD_MUTEX_INITIALIZER;
+
+bool map_address(uint64_t addr) {
+  mach_vm_address_t region_start = addr;
+  mach_vm_address_t region_size;
+  vm_region_basic_info_data_64_t info;
+  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+  mach_port_t object;
+
+  kern_return_t ret = mach_vm_region(current_task(), &region_start,
+                                     &region_size, VM_REGION_BASIC_INFO_64,
+                                     (vm_region_info_t)&info, &count, &object);
+  if (ret == KERN_SUCCESS) {
+    printf("region start = %llx, size = %llx, prot=%d\n", region_start,
+           region_size, info.protection);
+    if (addr >= region_start && addr < region_start + region_size) {
+      // addr is a valid guest virtual address
+      pthread_mutex_lock(
+          &mapping_lock);  // different vthreads share the same page table
+      struct linear_addr_4kb_t* linear_addr = (struct linear_addr_4kb_t*)&addr;
+      struct PML4E* pml4e = (struct PML4E*)guest_paging_data;
+      if (pml4e[linear_addr->pml4].pres == 0) {
+        pml4e[linear_addr->pml4].pres = 1;
+        pml4e[linear_addr->pml4].rw = 1;
+        pml4e[linear_addr->pml4].pdpt_base = available_pg;
+        available_pg += 1;
+      }
+      struct PDPTE* pdpte =
+          (struct PDPTE*)(guest_paging_data +
+                          pml4e[linear_addr->pml4].pdpt_base * FourKB);
+      if (pdpte[linear_addr->pdpt].pres == 0) {
+        pdpte[linear_addr->pdpt].pres = 1;
+        pdpte[linear_addr->pdpt].rw = 1;
+        pdpte[linear_addr->pdpt].pd_base = available_pg;
+        available_pg += 1;
+      }
+      struct PDE* pde =
+          (struct PDE*)(guest_paging_data +
+                        pdpte[linear_addr->pdpt].pd_base * FourKB);
+      if (pde[linear_addr->pd].pres == 0) {
+        pde[linear_addr->pd].pres = 1;
+        pde[linear_addr->pd].rw = 1;
+        pde[linear_addr->pd].pt_base = available_pg;
+        available_pg += 1;
+      }
+      struct PTE* pte = (struct PTE*)(guest_paging_data +
+                                      pde[linear_addr->pd].pt_base * FourKB);
+      if (pte[linear_addr->pt].pres == 0) {
+        pte[linear_addr->pt].pres = 1;
+        pte[linear_addr->pt].rw = 1;
+        pte[linear_addr->pt].pg_base = guest_available_addr >> FOUR_KB_SHIFT;
+        GUARD(hv_vm_map((void*)((addr >> 12) << 12), guest_available_addr,
+                        FourKB, info.protection),
+              HV_SUCCESS);
+        guest_available_addr += FourKB;
+      }
+      pthread_mutex_unlock(&mapping_lock);
+      return true;
+    } else {
+      printf("%llx is not a valid host virtual address\n", addr);
+    }
+  } else {
+    printf("mach_vm_region = %lld\n", ret);
+    return false;
+  }
 }

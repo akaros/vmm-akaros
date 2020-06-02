@@ -53,7 +53,8 @@ void vth_init() {
   GUARD(mach_vm_allocate(mach_task_self(), &guest_stack_addr,
                          num_stack * GUEST_STACK_SIZE, VM_FLAGS_ANYWHERE),
         KERN_SUCCESS);
-  setup_identity_map();
+  // setup_identity_map();
+  setup_pml4();
   // use mach_vm_region() to get the starting address of current process's text
   // and data
   // mach_vm_size_t region_size;
@@ -387,13 +388,21 @@ void* vcpu_create_run(void* arg_vth) {
       printf("VMX_REASON_EXC_NMI\n");
       uint32_t info = rvmcs(vcpu, VMCS_RO_VMEXIT_IRQ_INFO);
       uint64_t code = rvmcs(vcpu, VMCS_RO_VMEXIT_IRQ_ERROR);
-      print_bits(info, 32);
+      // print_bits(info, 32);
       // print_bits(code, 32);
-      print_exception_info(info, code);
-      printf("code:\n");
-      print_payload((char*)ip - 64, 64);
-      printf("\n");
-      print_payload((char*)ip, 32);
+      // print_exception_info(info, code);
+      // printf("code:\n");
+      // print_payload((char*)ip - 64, 64);
+      // printf("\n");
+      // print_payload((char*)ip, 32);
+      // printf("cr2=%llx\n", rreg(vcpu, HV_X86_CR2));
+      struct interrupt_info* info_s = (struct interrupt_info*)&info;
+      if (info_s->vector == 14) {
+        printf("page fault, linear addr = %llx\n", qual);
+        if (map_address(qual)) {
+          continue;
+        }
+      }
       break;
     } else if (exit_reason == VMX_REASON_HLT) {
       print_red("VMX_REASON_HLT\n");
