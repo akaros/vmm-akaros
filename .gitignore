@@ -31,3 +31,7 @@
 # Debug files
 *.dSYM/
 /vmm
+
+# xhype
+xhype/vthread-rs/target
+xhype/vthread-rs/Cargo.lock

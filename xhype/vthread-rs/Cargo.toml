@@ -1,0 +1,9 @@
+[package]
+name = "vthread-rs"
+version = "0.1.0"
+authors = ["Changyuan Lyu <changyuanl@google.com>"]
+edition = "2018"
+
+build = "build.rs"
+
+[dependencies]
