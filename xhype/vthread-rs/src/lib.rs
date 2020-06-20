@@ -1,5 +1,6 @@
 #[allow(non_upper_case_globals)]
 pub mod consts;
+mod cpuid;
 #[allow(dead_code)]
 mod hv;
 #[allow(non_camel_case_types)]
@@ -262,7 +263,6 @@ impl<'a> GuestThread<'a> {
 }
 
 extern "C" {
-    #[link(name = "libhlt")]
     pub fn hlt();
 }
 
