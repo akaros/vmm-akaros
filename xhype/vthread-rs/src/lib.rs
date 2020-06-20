@@ -14,10 +14,32 @@ use hv::{
 };
 use mach::{vm_self_region, MachVMBlock};
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use x86::*;
 
-pub fn vmm_init() -> Result<(), u32> {
-    hv::vm_create(0)
+// only one vmm is allowed to be created per process
+pub struct VMManager {
+    marker: PhantomData<()>, // add a PhantomData here to prevent user from constructing VMM by VMManager{}
+}
+
+impl VMManager {
+    pub fn new() -> Result<Self, u32> {
+        hv::vm_create(0)?;
+        Ok(VMManager {
+            marker: PhantomData,
+        })
+    }
+
+    pub fn create_vm(&self) -> Result<VirtualMachine, u32> {
+        VirtualMachine::new()
+    }
+}
+
+// let rust call hv_vm_destroy automatically
+impl Drop for VMManager {
+    fn drop(&mut self) {
+        hv::vm_destroy().unwrap();
+    }
 }
 
 #[derive(Debug)]
@@ -26,7 +48,9 @@ pub struct VirtualMachine {
 }
 
 impl VirtualMachine {
-    pub fn new() -> Result<Self, u32> {
+    // make it private to force user to create a vm by calling create_vm to make
+    // sure that hv_vm_create() is called before hv_vm_space_create() is called
+    fn new() -> Result<Self, u32> {
         let vm = VirtualMachine {
             mem_space: MemSpace::create()?,
         };
@@ -243,7 +267,7 @@ extern "C" {
 #[cfg(test)]
 mod tests {
     use super::vthread::VThread;
-    use super::{vmm_init, HandleResult, VirtualMachine, VCPU};
+    use super::{HandleResult, VMManager, VCPU};
 
     static mut NUM_A: i32 = 1;
     extern "C" fn add_a() {
@@ -254,8 +278,8 @@ mod tests {
 
     #[test]
     fn vthread_test() {
-        vmm_init().unwrap();
-        let vm = VirtualMachine::new().unwrap();
+        let vmm = VMManager::new().unwrap();
+        let vm = vmm.create_vm().unwrap();
         let vth = VThread::create(&vm, add_a).unwrap();
         let vcpu = VCPU::create().unwrap();
         assert_eq!(vth.gth.run_on(&vcpu), Ok(HandleResult::Exit));
