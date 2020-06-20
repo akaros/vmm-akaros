@@ -1,4 +1,5 @@
 use std::mem::size_of;
+use std::slice;
 
 type kern_return_t = u32;
 type vm_map_t = u32;
@@ -100,6 +101,7 @@ pub fn vm_deallocate(addr: usize, size: usize) -> Result<(), u32> {
     }
 }
 
+#[derive(Debug)]
 pub struct MachVMBlock {
     pub start: usize,
     pub size: usize,
@@ -116,16 +118,42 @@ impl MachVMBlock {
         Ok(MachVMBlock { start, size })
     }
 
-    pub fn write<T>(&self, val: T, offset: usize) -> Result<(), &str> {
-        if size_of::<T>() + offset > self.size {
+    pub fn new_aligned(size: usize, align: usize) -> Result<Self, u32> {
+        let start = vm_allocate(size + align)?;
+        let start_aligned = (start / align + 1) * align;
+        vm_deallocate(start, start_aligned - start)?;
+        vm_deallocate(start_aligned + size, start % align)?;
+        Ok(MachVMBlock {
+            start: start_aligned,
+            size: size,
+        })
+    }
+
+    pub fn write<T>(&mut self, val: T, offset: usize, index: usize) -> Result<(), &str> {
+        if (index + 1) * size_of::<T>() + offset > self.size {
             return Err("overflow");
         }
-        let start_ptr = self.start as *mut T;
+        let ptr = (self.start + offset + index * size_of::<T>()) as *mut T;
         unsafe {
-            let ptr = start_ptr.offset(offset as isize);
             ptr.write(val);
         }
         Ok(())
+    }
+
+    pub fn read<T>(&self, offset: usize, index: usize) -> Result<T, &str> {
+        if (index + 1) * size_of::<T>() + offset > self.size {
+            return Err("overflow");
+        }
+        let ptr = (self.start + offset + index * size_of::<T>()) as *const T;
+        Ok(unsafe { ptr.read() })
+    }
+
+    pub fn as_slice<T>(&self) -> &[T] {
+        unsafe { slice::from_raw_parts(self.start as *const T, self.size / size_of::<T>()) }
+    }
+
+    pub fn as_mut_slice<T>(&mut self) -> &mut [T] {
+        unsafe { slice::from_raw_parts_mut(self.start as *mut T, self.size / size_of::<T>()) }
     }
 }
 
@@ -139,7 +167,7 @@ impl Drop for MachVMBlock {
 mod tests {
     use super::vm_allocate;
     #[test]
-    fn detect_regions() {
+    fn detect_regions_test() {
         let mut addr = 1;
         println!("&addr = {:x}", &addr as *const usize as usize);
         loop {
@@ -167,13 +195,8 @@ mod tests {
         println!("addr_anywhere = {:x}", addr_anywhere);
         vm_deallocate(addr_anywhere, one_page).unwrap();
         let addr_fixed: usize = 0x400000000;
-        match vm_allocate_fixed(addr_fixed, one_page) {
-            Ok(()) => {
-                println!("addr_fixed = {:x}", addr_fixed);
-                vm_deallocate(addr_fixed, one_page).unwrap();
-            }
-            Err(e) => println!("vm_allocate_fixed error = {:x}", e),
-        }
+        vm_allocate_fixed(addr_fixed, one_page).unwrap();
+        vm_deallocate(addr_fixed, one_page).unwrap();
     }
 
     use super::MachVMBlock;
@@ -189,32 +212,29 @@ mod tests {
         let b = 2;
         {
             let two_int = TwoInt { a, b };
-            let mem_block = MachVMBlock::new(one_page).unwrap();
+            let mut mem_block = MachVMBlock::new(one_page).unwrap();
             start = mem_block.start;
-            println!("mem_block start = {:x}", start);
-            mem_block.write(two_int, 0).unwrap();
-            let ptr = mem_block.start as *const TwoInt;
-            unsafe {
-                assert_eq!((*ptr).a, a);
-                assert_eq!((*ptr).b, b);
-            }
-            println!("will drop mem_block");
+            mem_block.write(two_int, 0, 0).unwrap();
+            let two_int2: TwoInt = mem_block.read(0, 0).unwrap();
+            assert_eq!(two_int2.a, a);
+            assert_eq!(two_int2.b, b);
+            // mem_block is dropped here and the corresponding memory is released.
         }
-        println!("mem_block dropped");
-        println!("try allocating memory at {:x} again", start);
-        match MachVMBlock::new_fixed(start, one_page) {
-            Ok(mem_block) => {
-                println!("success");
-                let ptr = mem_block.start as *const TwoInt;
-                unsafe {
-                    assert_eq!((*ptr).a, 0);
-                    assert_eq!((*ptr).b, 0);
-                }
-            }
-            Err(e) => {
-                println!("fail, error = {:x}", e);
-                panic!();
-            }
-        }
+        // allocate memory at `start' again to verify that `mem_block' is
+        // correctly dropped.
+        let mem_block2 = MachVMBlock::new_fixed(start, one_page).unwrap();
+        // verify that the memory region is cleared to 0.
+        let two_int3: TwoInt = mem_block2.read(0, 0).unwrap();
+        assert_eq!(two_int3.a, 0);
+        assert_eq!(two_int3.b, 0);
+    }
+
+    #[test]
+    fn vm_block_slice_test() {
+        let mut block = MachVMBlock::new(4096).unwrap();
+        let p_mut = block.as_mut_slice();
+        p_mut[3] = 1u64;
+        let p: &[u64] = block.as_slice();
+        assert_eq!(p[3], 1u64);
     }
 }

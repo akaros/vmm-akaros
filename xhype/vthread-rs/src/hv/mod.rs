@@ -82,6 +82,7 @@ pub fn vm_destroy() -> Result<(), u32> {
     check_ret(unsafe { hv_vm_destroy() })
 }
 
+#[derive(Debug)]
 pub struct MemSpace {
     id: u32,
 }
@@ -123,7 +124,7 @@ pub fn cap2ctrl(cap: u64, ctrl: u64) -> u64 {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub enum X86Reg {
     RIP,

@@ -1,6 +1,5 @@
 #[allow(dead_code)]
 mod hv;
-pub mod loader;
 #[allow(non_camel_case_types)]
 mod mach;
 mod paging;
@@ -21,6 +20,7 @@ pub fn vmm_init() -> Result<(), u32> {
     hv::vm_create(0)
 }
 
+#[derive(Debug)]
 pub struct VirtualMachine {
     mem_space: MemSpace,
 }
@@ -54,6 +54,7 @@ impl VirtualMachine {
     }
 }
 
+#[derive(Debug)]
 pub struct GuestThread<'a> {
     pub vm: &'a VirtualMachine,
     pub init_vmcs: HashMap<u32, u64>,
@@ -188,6 +189,8 @@ impl<'a> GuestThread<'a> {
 
         vcpu.dump().unwrap();
         let mut result: HandleResult;
+        let mut last_physical_addr = 0;
+        let mut ept_count = 0;
         loop {
             vcpu.run()?;
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
@@ -196,10 +199,27 @@ impl<'a> GuestThread<'a> {
                 VMX_REASON_EXC_NMI => HandleResult::Abort(reason),
                 VMX_REASON_IRQ => HandleResult::Resume,
                 VMX_REASON_HLT => HandleResult::Exit,
-                VMX_REASON_EPT_VIOLATION => HandleResult::Resume,
+                VMX_REASON_EPT_VIOLATION => {
+                    let physical_addr = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
+                    if physical_addr == last_physical_addr {
+                        ept_count += 1;
+                    } else {
+                        ept_count = 0;
+                        last_physical_addr = physical_addr;
+                    }
+                    if ept_count > 10 {
+                        HandleResult::Abort(reason)
+                    } else {
+                        HandleResult::Resume
+                    }
+                }
                 _ => {
-                    dbg!(reason);
-                    HandleResult::Abort(reason)
+                    if reason < VMX_REASON_MAX {
+                        dbg!(reason);
+                        HandleResult::Abort(reason)
+                    } else {
+                        return Err(reason as u32);
+                    }
                 }
             };
             match result {
