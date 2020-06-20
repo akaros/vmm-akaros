@@ -1,3 +1,5 @@
+#[allow(non_upper_case_globals)]
+pub mod consts;
 #[allow(dead_code)]
 mod hv;
 #[allow(non_camel_case_types)]

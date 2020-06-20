@@ -1,5 +1,7 @@
 use std::mem::size_of;
+use std::ops::{Index, IndexMut};
 use std::slice;
+use std::slice::SliceIndex;
 
 type kern_return_t = u32;
 type vm_map_t = u32;
@@ -163,6 +165,21 @@ impl Drop for MachVMBlock {
     }
 }
 
+impl<I: SliceIndex<[u8]>> Index<I> for MachVMBlock {
+    type Output = I::Output;
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        &self.as_slice()[index]
+    }
+}
+
+impl<I: SliceIndex<[u8]>> IndexMut<I> for MachVMBlock {
+    #[inline]
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        &mut self.as_mut_slice()[index]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::vm_allocate;
@@ -236,5 +253,13 @@ mod tests {
         p_mut[3] = 1u64;
         let p: &[u64] = block.as_slice();
         assert_eq!(p[3], 1u64);
+    }
+
+    #[test]
+    fn vm_block_index_test() {
+        let mut block = MachVMBlock::new(4096).unwrap();
+        block[0] = 4;
+        assert_eq!(block[0], 4);
+        assert_eq!(&block[0..2], [4, 0])
     }
 }
