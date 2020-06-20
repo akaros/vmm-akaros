@@ -1,3 +1,6 @@
+pub const FL_RSVD_1: u64 = 0x00000002; // These 1s must be 1, rflags |= this
+pub const FL_RSVD_0: u64 = 0x003f7fd7; // These 0s must be 0, rflags &= this
+
 /*
  * Basic CPU control in CR0
  */

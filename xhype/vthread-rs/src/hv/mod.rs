@@ -1,4 +1,4 @@
-use std::result::Result;
+use super::Error;
 
 #[allow(non_camel_case_types)]
 #[allow(dead_code)]
@@ -50,10 +50,11 @@ pub enum VMXCap {
     PREEMPTION_TIMER = 32,
 }
 
-fn check_ret(hv_ret: u32) -> Result<(), u32> {
+#[inline]
+fn check_ret(hv_ret: u32, msg: &'static str) -> Result<(), Error> {
     match hv_ret {
         0 => Ok(()),
-        n => Err(n),
+        e => Err((e, msg))?,
     }
 }
 
@@ -66,20 +67,20 @@ pub enum HVCap {
     HV_CAP_ADDRSPACEMAX,
 }
 
-pub fn capability(cap: HVCap) -> Result<u64, u32> {
+pub fn capability(cap: HVCap) -> Result<u64, Error> {
     let mut value: u64 = 0;
     match unsafe { hv_capability(cap, &mut value) } {
         0 => Ok(value),
-        n => Err(n),
+        n => Err((n, "hv_capability"))?,
     }
 }
 
-pub fn vm_create(flags: u64) -> Result<(), u32> {
-    check_ret(unsafe { hv_vm_create(flags) })
+pub fn vm_create(flags: u64) -> Result<(), Error> {
+    check_ret(unsafe { hv_vm_create(flags) }, "hv_vm_create")
 }
 
-pub fn vm_destroy() -> Result<(), u32> {
-    check_ret(unsafe { hv_vm_destroy() })
+pub fn vm_destroy() -> Result<(), Error> {
+    check_ret(unsafe { hv_vm_destroy() }, "hv_vm_destroy")
 }
 
 #[derive(Debug)]
@@ -90,32 +91,41 @@ pub struct MemSpace {
 pub const DEFAULT_MEM_SPACE: MemSpace = MemSpace { id: 0 };
 
 impl MemSpace {
-    pub fn create() -> Result<Self, u32> {
+    pub fn create() -> Result<Self, Error> {
         let mut id: u32 = 0;
         match unsafe { hv_vm_space_create(&mut id) } {
             0 => Ok(MemSpace { id }),
-            n => Err(n),
+            n => Err((n, "hv_vm_space_create"))?,
         }
     }
 
-    pub fn destroy(&self) -> Result<(), u32> {
-        check_ret(unsafe { hv_vm_space_destroy(self.id) })
+    pub fn destroy(&self) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vm_space_destroy(self.id) },
+            "hv_vm_space_destroy",
+        )
     }
 
-    pub fn map(&self, uva: usize, gpa: usize, size: usize, flags: u64) -> Result<(), u32> {
-        check_ret(unsafe { hv_vm_map_space(self.id, uva, gpa, size, flags) })
+    pub fn map(&self, uva: usize, gpa: usize, size: usize, flags: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vm_map_space(self.id, uva, gpa, size, flags) },
+            "hv_vm_map_space",
+        )
     }
 
-    pub fn unmap(&self, gpa: usize, size: usize) -> Result<(), u32> {
-        check_ret(unsafe { hv_vm_unmap_space(self.id, gpa, size) })
+    pub fn unmap(&self, gpa: usize, size: usize) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vm_unmap_space(self.id, gpa, size) },
+            "hv_vm_unmap_space",
+        )
     }
 }
 
-pub fn vmx_read_capability(field: VMXCap) -> Result<u64, u32> {
+pub fn vmx_read_capability(field: VMXCap) -> Result<u64, Error> {
     let mut value = 0;
     match unsafe { hv_vmx_read_capability(field, &mut value) } {
         0 => Ok(value),
-        n => Err(n),
+        n => Err((n, "hv_vmx_read_capability"))?,
     }
 }
 
@@ -186,16 +196,16 @@ pub struct VCPU {
 }
 
 impl VCPU {
-    pub fn create() -> Result<Self, u32> {
+    pub fn create() -> Result<Self, Error> {
         let mut vcpu_id: u32 = 0;
         let flags = HV_VCPU_DEFAULT;
         match unsafe { hv_vcpu_create(&mut vcpu_id, flags) } {
             0 => Ok(VCPU { id: vcpu_id }),
-            e => Err(e),
+            e => Err((e, "hv_vcpu_create"))?,
         }
     }
 
-    pub fn dump(&self) -> Result<(), u32> {
+    pub fn dump(&self) -> Result<(), Error> {
         println!(
             "VMCS_CTRL_PIN_BASED: {:x}",
             self.read_vmcs(VMCS_CTRL_PIN_BASED)?
@@ -350,58 +360,73 @@ impl VCPU {
         Ok(())
     }
 
-    pub fn set_space(&self, space: &MemSpace) -> Result<(), u32> {
-        check_ret(unsafe { hv_vcpu_set_space(self.id, space.id) })
+    pub fn set_space(&self, space: &MemSpace) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_set_space(self.id, space.id) },
+            "hv_vcpu_set_space",
+        )
     }
 
-    pub fn read_reg(&self, reg: X86Reg) -> Result<u64, u32> {
+    pub fn read_reg(&self, reg: X86Reg) -> Result<u64, Error> {
         let mut value = 0;
         match unsafe { hv_vcpu_read_register(self.id, reg, &mut value) } {
             0 => Ok(value),
-            n => Err(n),
+            n => Err((n, "hv_vcpu_read_register"))?,
         }
     }
 
-    pub fn write_reg(&self, reg: X86Reg, value: u64) -> Result<(), u32> {
-        check_ret(unsafe { hv_vcpu_write_register(self.id, reg, value) })
+    pub fn write_reg(&self, reg: X86Reg, value: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_write_register(self.id, reg, value) },
+            "hv_vcpu_write_register",
+        )
     }
 
-    pub fn read_msr(&self, msr: u32) -> Result<u64, u32> {
+    pub fn read_msr(&self, msr: u32) -> Result<u64, Error> {
         let mut value = 0;
         match unsafe { hv_vcpu_read_msr(self.id, msr, &mut value) } {
             0 => Ok(value),
-            n => Err(n),
+            n => Err((n, "hv_vcpu_read_msr"))?,
         }
     }
 
-    pub fn write_msr(&self, msr: u32, value: u64) -> Result<(), u32> {
-        check_ret(unsafe { hv_vcpu_write_msr(self.id, msr, value) })
+    pub fn write_msr(&self, msr: u32, value: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_write_msr(self.id, msr, value) },
+            "hv_vcpu_write_msr",
+        )
     }
 
-    pub fn enable_native_msr(&self, msr: u32, enable: bool) -> Result<(), u32> {
-        check_ret(unsafe { hv_vcpu_enable_native_msr(self.id, msr, enable) })
+    pub fn enable_native_msr(&self, msr: u32, enable: bool) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_enable_native_msr(self.id, msr, enable) },
+            "hv_vcpu_enable_native_msr",
+        )
     }
 
-    pub fn run(&self) -> Result<(), u32> {
-        check_ret(unsafe { hv_vcpu_run(self.id) })
+    pub fn run(&self) -> Result<(), Error> {
+        check_ret(unsafe { hv_vcpu_run(self.id) }, "hv_vcpu_run")
     }
 
-    pub fn read_vmcs(&self, field: u32) -> Result<u64, u32> {
+    pub fn read_vmcs(&self, field: u32) -> Result<u64, Error> {
         let mut value = 0;
         match unsafe { hv_vmx_vcpu_read_vmcs(self.id, field, &mut value) } {
             0 => Ok(value),
-            n => Err(n),
+            n => Err((n, "hv_vmx_vcpu_read_vmcs"))?,
         }
     }
-    pub fn write_vmcs(&self, field: u32, value: u64) -> Result<(), u32> {
-        check_ret(unsafe { hv_vmx_vcpu_write_vmcs(self.id, field, value) })
+    pub fn write_vmcs(&self, field: u32, value: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vmx_vcpu_write_vmcs(self.id, field, value) },
+            "hv_vmx_vcpu_write_vmcs",
+        )
     }
 }
 
 impl Drop for VCPU {
     fn drop(&mut self) {
         self.set_space(&DEFAULT_MEM_SPACE).unwrap();
-        check_ret(unsafe { hv_vcpu_destroy(self.id) }).unwrap();
+        check_ret(unsafe { hv_vcpu_destroy(self.id) }, "hv_vcpu_destroy").unwrap();
     }
 }
 
@@ -414,13 +439,13 @@ mod tests {
         println!("pin cap={:x}", vmx_read_capability(VMXCap::ENTRY).unwrap());
         {
             let vcpu = VCPU::create().unwrap();
-            vcpu.write_reg(X86Reg::RFLAGS, 0x2).unwrap();
-            assert_eq!(vcpu.read_reg(X86Reg::RFLAGS), Ok(0x2));
+            vcpu.write_reg(X86Reg::RFLAGS, 0x2u64).unwrap();
+            assert_eq!(vcpu.read_reg(X86Reg::RFLAGS).unwrap(), 0x2u64);
         }
         {
             let vcpu = VCPU::create().unwrap();
             vcpu.write_vmcs(VMCS_CTRL_CR4_MASK, 0x2000).unwrap();
-            assert_eq!(vcpu.read_vmcs(VMCS_CTRL_CR4_MASK), Ok(0x2000));
+            assert_eq!(vcpu.read_vmcs(VMCS_CTRL_CR4_MASK).unwrap(), 0x2000);
         }
 
         vm_destroy().unwrap();

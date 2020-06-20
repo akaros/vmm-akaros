@@ -1,14 +1,18 @@
 #[allow(non_upper_case_globals)]
 pub mod consts;
 mod cpuid;
+pub mod err;
 #[allow(dead_code)]
 mod hv;
+pub mod loader;
 #[allow(non_camel_case_types)]
 mod mach;
+mod msr;
 mod paging;
 pub mod vthread;
 #[allow(dead_code)]
 mod x86;
+use err::Error;
 use hv::vmx::*;
 use hv::X86Reg;
 use hv::{
@@ -26,14 +30,14 @@ pub struct VMManager {
 }
 
 impl VMManager {
-    pub fn new() -> Result<Self, u32> {
+    pub fn new() -> Result<Self, Error> {
         hv::vm_create(0)?;
         Ok(VMManager {
             marker: PhantomData,
         })
     }
 
-    pub fn create_vm(&self) -> Result<VirtualMachine, u32> {
+    pub fn create_vm(&self) -> Result<VirtualMachine, Error> {
         VirtualMachine::new()
     }
 }
@@ -53,7 +57,7 @@ pub struct VirtualMachine {
 impl VirtualMachine {
     // make it private to force user to create a vm by calling create_vm to make
     // sure that hv_vm_create() is called before hv_vm_space_create() is called
-    fn new() -> Result<Self, u32> {
+    fn new() -> Result<Self, Error> {
         let vm = VirtualMachine {
             mem_space: MemSpace::create()?,
         };
@@ -61,7 +65,7 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    fn gpa2hva_map(&self) -> Result<(), u32> {
+    fn gpa2hva_map(&self) -> Result<(), Error> {
         let mut trial_addr = 1;
         loop {
             match vm_self_region(trial_addr) {
@@ -91,7 +95,7 @@ pub struct GuestThread<'a> {
 }
 
 impl VCPU {
-    fn longmode(&self) -> Result<(), u32> {
+    fn longmode(&self) -> Result<(), Error> {
         self.enable_native_msr(MSR_LSTAR, true)?;
         self.enable_native_msr(MSR_CSTAR, true)?;
         self.enable_native_msr(MSR_STAR, true)?;
@@ -189,14 +193,14 @@ impl VCPU {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum HandleResult {
-    Abort(u64),
+    Unhandled(&'static str),
     Exit,
     Resume,
     Next,
 }
 
 impl<'a> GuestThread<'a> {
-    pub fn run_on(&self, vcpu: &VCPU) -> Result<HandleResult, u32> {
+    pub fn run_on(&self, vcpu: &VCPU) -> Result<(), Error> {
         vcpu.set_space(&self.vm.mem_space)?;
         vcpu.longmode()?;
         for (field, value) in self.init_vmcs.iter() {
@@ -214,7 +218,7 @@ impl<'a> GuestThread<'a> {
             )?;
         }
 
-        vcpu.dump().unwrap();
+        // vcpu.dump().unwrap();
         let mut result: HandleResult;
         let mut last_physical_addr = 0;
         let mut ept_count = 0;
@@ -223,9 +227,12 @@ impl<'a> GuestThread<'a> {
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
             result = match reason {
-                VMX_REASON_EXC_NMI => HandleResult::Abort(reason),
+                VMX_REASON_EXC_NMI => HandleResult::Unhandled("VMX_REASON_EXC_NMI"),
                 VMX_REASON_IRQ => HandleResult::Resume,
+                VMX_REASON_CPUID => cpuid::handle_cpuid(&vcpu, self),
                 VMX_REASON_HLT => HandleResult::Exit,
+                VMX_REASON_RDMSR => msr::handle_rdmsr(&vcpu, self),
+                VMX_REASON_WRMSR => msr::handle_wrmsr(&vcpu, self),
                 VMX_REASON_EPT_VIOLATION => {
                     let physical_addr = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
                     if physical_addr == last_physical_addr {
@@ -235,7 +242,7 @@ impl<'a> GuestThread<'a> {
                         last_physical_addr = physical_addr;
                     }
                     if ept_count > 10 {
-                        HandleResult::Abort(reason)
+                        HandleResult::Unhandled("too many EPT at the same place")
                     } else {
                         HandleResult::Resume
                     }
@@ -243,14 +250,15 @@ impl<'a> GuestThread<'a> {
                 _ => {
                     if reason < VMX_REASON_MAX {
                         dbg!(reason);
-                        HandleResult::Abort(reason)
+                        HandleResult::Unhandled("unable to handle")
                     } else {
-                        return Err(reason as u32);
+                        return Err(Error::Unhandled(reason, "unknown reason"));
                     }
                 }
             };
             match result {
-                HandleResult::Abort(_) | HandleResult::Exit => break,
+                HandleResult::Exit => break,
+                HandleResult::Unhandled(msg) => return Err(Error::Unhandled(reason, msg)),
                 HandleResult::Next => {
                     let rip = vcpu.read_reg(X86Reg::RIP)?;
                     vcpu.write_reg(X86Reg::RIP, rip + instr_len)?;
@@ -258,7 +266,7 @@ impl<'a> GuestThread<'a> {
                 HandleResult::Resume => (),
             };
         }
-        Ok(result)
+        Ok(())
     }
 }
 
@@ -269,7 +277,7 @@ extern "C" {
 #[cfg(test)]
 mod tests {
     use super::vthread::VThread;
-    use super::{HandleResult, VMManager, VCPU};
+    use super::{VMManager, VCPU};
 
     static mut NUM_A: i32 = 1;
     extern "C" fn add_a() {
@@ -284,7 +292,7 @@ mod tests {
         let vm = vmm.create_vm().unwrap();
         let vth = VThread::create(&vm, add_a).unwrap();
         let vcpu = VCPU::create().unwrap();
-        assert_eq!(vth.gth.run_on(&vcpu), Ok(HandleResult::Exit));
+        vth.gth.run_on(&vcpu).unwrap();
         unsafe {
             assert_eq!(NUM_A, 4);
         }
