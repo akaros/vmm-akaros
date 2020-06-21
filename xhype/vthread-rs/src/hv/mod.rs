@@ -196,6 +196,9 @@ pub struct VCPU {
 }
 
 impl VCPU {
+    pub fn id(&self) -> u32 {
+        self.id
+    }
     pub fn create() -> Result<Self, Error> {
         let mut vcpu_id: u32 = 0;
         let flags = HV_VCPU_DEFAULT;

@@ -1,5 +1,6 @@
-// VMX exit reasons
+use super::X86Reg;
 
+// VMX exit reasons
 pub const VMX_REASON_EXC_NMI: u64 = 0;
 pub const VMX_REASON_IRQ: u64 = 1;
 pub const VMX_REASON_TRIPLE_FAULT: u64 = 2;
@@ -285,3 +286,25 @@ pub const VMENTRY_DEACTIVATE_DUAL_MONITOR: u64 = 1 << 11;
 pub const VMENTRY_LOAD_IA32_PERF_GLOBAL_CTRL: u64 = 1 << 13;
 pub const VMENTRY_LOAD_IA32_PAT: u64 = 1 << 14;
 pub const VMENTRY_LOAD_EFER: u64 = 1 << 15;
+
+#[inline]
+pub fn get_guest_reg(num: u64) -> X86Reg {
+    [
+        X86Reg::RAX,
+        X86Reg::RCX,
+        X86Reg::RDX,
+        X86Reg::RBX,
+        X86Reg::RSP,
+        X86Reg::RBP,
+        X86Reg::RSI,
+        X86Reg::RDI,
+        X86Reg::R8,
+        X86Reg::R9,
+        X86Reg::R10,
+        X86Reg::R11,
+        X86Reg::R12,
+        X86Reg::R13,
+        X86Reg::R14,
+        X86Reg::R15,
+    ][num as usize]
+}

@@ -9,6 +9,7 @@ pub mod loader;
 mod mach;
 mod msr;
 mod paging;
+mod vmexit;
 pub mod vthread;
 #[allow(dead_code)]
 mod x86;
@@ -22,6 +23,7 @@ use hv::{
 use mach::{vm_self_region, MachVMBlock};
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use vmexit::handle_cr;
 use x86::*;
 
 // only one vmm is allowed to be created per process
@@ -39,6 +41,9 @@ impl VMManager {
 
     pub fn create_vm(&self) -> Result<VirtualMachine, Error> {
         VirtualMachine::new()
+    }
+    pub fn create_vcpu(&self) -> Result<VCPU, Error> {
+        VCPU::create()
     }
 }
 
@@ -178,8 +183,8 @@ impl VCPU {
 
         let cr0 = X86_CR0_NE | X86_CR0_ET | X86_CR0_PE | X86_CR0_PG;
         self.write_vmcs(VMCS_GUEST_CR0, cr0)?;
-        self.write_vmcs(VMCS_CTRL_CR0_MASK, 0xe0000031)?;
-        self.write_vmcs(VMCS_CTRL_CR0_SHADOW, 0)?;
+        self.write_vmcs(VMCS_CTRL_CR0_MASK, X86_CR0_PE | X86_CR0_PG)?;
+        self.write_vmcs(VMCS_CTRL_CR0_SHADOW, X86_CR0_PE | X86_CR0_PG)?;
 
         let cr4 = X86_CR4_VMXE | X86_CR4_OSFXSR | X86_CR4_OSXSAVE | X86_CR4_PAE;
         self.write_vmcs(VMCS_GUEST_CR4, cr4)?;
@@ -193,7 +198,6 @@ impl VCPU {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum HandleResult {
-    Unhandled(&'static str),
     Exit,
     Resume,
     Next,
@@ -227,12 +231,13 @@ impl<'a> GuestThread<'a> {
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
             result = match reason {
-                VMX_REASON_EXC_NMI => HandleResult::Unhandled("VMX_REASON_EXC_NMI"),
+                VMX_REASON_EXC_NMI => HandleResult::Next,
                 VMX_REASON_IRQ => HandleResult::Resume,
                 VMX_REASON_CPUID => cpuid::handle_cpuid(&vcpu, self),
                 VMX_REASON_HLT => HandleResult::Exit,
-                VMX_REASON_RDMSR => msr::handle_rdmsr(&vcpu, self),
-                VMX_REASON_WRMSR => msr::handle_wrmsr(&vcpu, self),
+                VMX_REASON_MOV_CR => handle_cr(&vcpu, self)?,
+                VMX_REASON_RDMSR => msr::handle_rdmsr(&vcpu, self)?,
+                VMX_REASON_WRMSR => msr::handle_wrmsr(&vcpu, self)?,
                 VMX_REASON_EPT_VIOLATION => {
                     let physical_addr = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
                     if physical_addr == last_physical_addr {
@@ -242,7 +247,7 @@ impl<'a> GuestThread<'a> {
                         last_physical_addr = physical_addr;
                     }
                     if ept_count > 10 {
-                        HandleResult::Unhandled("too many EPT at the same place")
+                        return Err(Error::Unhandled(reason, "too many EPT at the same place"));
                     } else {
                         HandleResult::Resume
                     }
@@ -250,7 +255,7 @@ impl<'a> GuestThread<'a> {
                 _ => {
                     if reason < VMX_REASON_MAX {
                         dbg!(reason);
-                        HandleResult::Unhandled("unable to handle")
+                        return Err(Error::Unhandled(reason, "unable to handle"));
                     } else {
                         return Err(Error::Unhandled(reason, "unknown reason"));
                     }
@@ -258,7 +263,6 @@ impl<'a> GuestThread<'a> {
             };
             match result {
                 HandleResult::Exit => break,
-                HandleResult::Unhandled(msg) => return Err(Error::Unhandled(reason, msg)),
                 HandleResult::Next => {
                     let rip = vcpu.read_reg(X86Reg::RIP)?;
                     vcpu.write_reg(X86Reg::RIP, rip + instr_len)?;
