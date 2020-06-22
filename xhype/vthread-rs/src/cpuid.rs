@@ -26,6 +26,7 @@ fn do_cpuid(eax: u32, ebx: u32) -> (u32, u32, u32, u32) {
 pub fn handle_cpuid(vcpu: &VCPU, _gth: &GuestThread) -> HandleResult {
     let eax_in = vcpu.read_reg(X86Reg::RAX).unwrap() as u32;
     let ecx_in = vcpu.read_reg(X86Reg::RCX).unwrap() as u32;
+    // FIX ME: can be optimized here
     let (mut eax, mut ebx, mut ecx, mut edx) = do_cpuid(eax_in, ecx_in);
     match eax_in {
         0x01 => {
@@ -47,6 +48,9 @@ pub fn handle_cpuid(vcpu: &VCPU, _gth: &GuestThread) -> HandleResult {
             // ebx |= (current->vmm.nr_guest_pcores & 0xff) << 16;
             // ebx |= (tf->tf_guest_pcoreid & 0xff) << 24;
             ebx |= (1 & 0xff) << 16;
+            // FIX me: vcpu.id might not be appropriate. vcpu of macOS is more
+            // like an executor of virtual tasks. For a virtual kernel we should
+            // use the id of its virtual threads.
             ebx |= (vcpu.id() & 0xff) << 24;
             warn!(
                 "set number of logical processors = 1, apic id = {}",
@@ -67,10 +71,10 @@ pub fn handle_cpuid(vcpu: &VCPU, _gth: &GuestThread) -> HandleResult {
         0x40000000 => {
             /* Signal the use of KVM. */
             eax = 0;
-            ebx = 0;
-            ecx = 0;
-            edx = 0;
-            unimplemented!();
+            // "KVMKVMKVM\0\0\0"
+            ebx = 0x4b4d564b;
+            ecx = 0x564b4d56;
+            edx = 0x4d;
         }
         0x40000003 => {
             /* Hypervisor Features. */
@@ -81,7 +85,10 @@ pub fn handle_cpuid(vcpu: &VCPU, _gth: &GuestThread) -> HandleResult {
         0x40000100 => {
             /* Signal the use of AKAROS. */
             eax = 0;
-            unimplemented!();
+            // "AKAROSINSIDE"
+            ebx = 0x52414b41;
+            ecx = 0x4e49534f;
+            edx = 0x45444953;
         }
         /* Hypervisor Features. */
         0x40000103 => {

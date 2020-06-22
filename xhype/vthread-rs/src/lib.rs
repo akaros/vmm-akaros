@@ -7,12 +7,13 @@ mod hv;
 pub mod loader;
 #[allow(non_camel_case_types)]
 mod mach;
-mod msr;
 mod paging;
 mod vmexit;
 pub mod vthread;
-#[allow(dead_code)]
+// #[allow(dead_code)]
 mod x86;
+#[allow(unused_imports)]
+use consts::msr::*;
 use err::Error;
 use hv::vmx::*;
 use hv::X86Reg;
@@ -23,7 +24,7 @@ use hv::{
 use mach::{vm_self_region, MachVMBlock};
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use vmexit::handle_cr;
+use vmexit::*;
 use x86::*;
 
 // only one vmm is allowed to be created per process
@@ -104,15 +105,15 @@ impl VCPU {
         self.enable_native_msr(MSR_LSTAR, true)?;
         self.enable_native_msr(MSR_CSTAR, true)?;
         self.enable_native_msr(MSR_STAR, true)?;
-        self.enable_native_msr(MSR_SF_MASK, true)?;
-        self.enable_native_msr(MSR_KGSBASE, true)?;
-        self.enable_native_msr(MSR_GSBASE, true)?;
-        self.enable_native_msr(MSR_FSBASE, true)?;
-        self.enable_native_msr(MSR_SYSENTER_CS_MSR, true)?;
-        self.enable_native_msr(MSR_SYSENTER_ESP_MSR, true)?;
-        self.enable_native_msr(MSR_SYSENTER_EIP_MSR, true)?;
-        self.enable_native_msr(MSR_TSC, true)?;
-        self.enable_native_msr(MSR_IA32_TSC_AUX, true)?;
+        self.enable_native_msr(MSR_SYSCALL_MASK, true)?;
+        self.enable_native_msr(MSR_KERNEL_GS_BASE, true)?;
+        self.enable_native_msr(MSR_GS_BASE, true)?;
+        self.enable_native_msr(MSR_FS_BASE, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_CS, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_ESP, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_EIP, true)?;
+        self.enable_native_msr(MSR_IA32_TSC, true)?;
+        self.enable_native_msr(MSR_TSC_AUX, true)?;
 
         self.write_vmcs(VMCS_GUEST_CS, 0x10)?;
         self.write_vmcs(VMCS_GUEST_CS_AR, 0xa09b)?;
@@ -236,8 +237,8 @@ impl<'a> GuestThread<'a> {
                 VMX_REASON_CPUID => cpuid::handle_cpuid(&vcpu, self),
                 VMX_REASON_HLT => HandleResult::Exit,
                 VMX_REASON_MOV_CR => handle_cr(&vcpu, self)?,
-                VMX_REASON_RDMSR => msr::handle_rdmsr(&vcpu, self)?,
-                VMX_REASON_WRMSR => msr::handle_wrmsr(&vcpu, self)?,
+                VMX_REASON_RDMSR => handle_msr_access(true, &vcpu, self)?,
+                VMX_REASON_WRMSR => handle_msr_access(false, &vcpu, self)?,
                 VMX_REASON_EPT_VIOLATION => {
                     let physical_addr = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
                     if physical_addr == last_physical_addr {

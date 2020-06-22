@@ -1,9 +1,12 @@
 #[allow(unused_imports)]
+use super::consts::msr::*;
+#[allow(unused_imports)]
 use super::hv::vmx::*;
 #[allow(unused_imports)]
 use super::x86::*;
 use super::{Error, GuestThread, HandleResult, X86Reg, VCPU};
-use log::info;
+use log::{error, info, warn};
+
 fn get_creg(num: u64) -> X86Reg {
     match num {
         0 => X86Reg::CR0,
@@ -57,4 +60,129 @@ pub fn handle_cr(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
     }
 
     Ok(HandleResult::Next)
+}
+
+//
+// Handle MSR
+//
+
+struct MSRHander(
+    pub u32,
+    pub fn(u32, bool, u64, &VCPU, &GuestThread) -> Result<HandleResult, Error>,
+);
+
+#[inline]
+fn write_msr_to_reg(msr_value: u64, vcpu: &VCPU) -> Result<HandleResult, Error> {
+    let new_eax = msr_value & 0xffffffff;
+    let new_edx = msr_value >> 32;
+    vcpu.write_reg(X86Reg::RAX, new_eax)?;
+    vcpu.write_reg(X86Reg::RDX, new_edx)?;
+    info!("return msr value = {:x}", msr_value);
+    Ok(HandleResult::Next)
+}
+
+fn emsr_unimpl(
+    _msr: u32,
+    _read: bool,
+    _new_value: u64,
+    _vcpu: &VCPU,
+    _gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    unimplemented!()
+}
+/*
+ * Set mandatory bits
+ *  11:   branch trace disabled
+ *  12:   PEBS unavailable
+ * Clear unsupported features
+ *  16:   SpeedStep enable
+ *  18:   enable MONITOR FSM
+ */
+// FIX ME!
+fn emsr_miscenable(
+    _msr: u32,
+    read: bool,
+    new_value: u64,
+    vcpu: &VCPU,
+    _gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    let misc_enable = 1 | ((1 << 12) | (1 << 11)) & !((1 << 18) | (1 << 16));
+    if read {
+        write_msr_to_reg(misc_enable, vcpu)
+    } else {
+        if new_value == misc_enable {
+            Ok(HandleResult::Next)
+        } else {
+            Err(Error::Unhandled(
+                VMX_REASON_WRMSR,
+                "write a different value to misc_enable",
+            ))
+        }
+    }
+}
+
+fn emsr_efer(
+    _msr: u32,
+    read: bool,
+    new_value: u64,
+    vcpu: &VCPU,
+    _gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    if read {
+        let value = vcpu.read_vmcs(VMCS_GUEST_IA32_EFER)?;
+        write_msr_to_reg(value, vcpu)
+    } else {
+        vcpu.write_vmcs(VMCS_GUEST_IA32_EFER, new_value)?;
+        Ok(HandleResult::Next)
+    }
+}
+
+fn emsr_rdonly(
+    msr: u32,
+    read: bool,
+    new_value: u64,
+    vcpu: &VCPU,
+    _gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    if read {
+        write_msr_to_reg(0, vcpu)
+    } else {
+        warn!("write {:x} to read-only msr {:x}", new_value, msr);
+        Ok(HandleResult::Next)
+    }
+}
+
+const MSR_HANDLERS: [MSRHander; 4] = [
+    MSRHander(MSR_IA32_BIOS_SIGN_ID, emsr_rdonly),
+    MSRHander(MSR_IA32_MISC_ENABLE, emsr_miscenable),
+    MSRHander(MSR_LAPIC_ICR, emsr_unimpl),
+    MSRHander(MSR_EFER, emsr_efer),
+];
+
+pub fn handle_msr_access(
+    read: bool,
+    vcpu: &VCPU,
+    gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    let ecx = vcpu.read_reg(X86Reg::RCX)? as u32;
+    let new_value = if !read {
+        let rdx = vcpu.read_reg(X86Reg::RDX)?;
+        let rax = vcpu.read_reg(X86Reg::RAX)?;
+        let v = (rdx << 32) | rax;
+        info!("write msr = {:x}, new_value = {:x}", ecx, v);
+        v
+    } else {
+        info!("read msr = {:x}", ecx);
+        0
+    };
+    for handler in MSR_HANDLERS.iter() {
+        if handler.0 == ecx {
+            return handler.1(ecx, read, new_value, vcpu, gth);
+        }
+    }
+    if read {
+        Err(Error::Unhandled(VMX_REASON_RDMSR, "unkown msr"))
+    } else {
+        Err(Error::Unhandled(VMX_REASON_WRMSR, "unkown msr"))
+    }
 }
