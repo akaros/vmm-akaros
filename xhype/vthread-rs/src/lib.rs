@@ -22,6 +22,7 @@ use hv::{
     HV_MEMORY_WRITE, VCPU,
 };
 use mach::{vm_self_region, MachVMBlock};
+use paging::PAGE_SIZE;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use vmexit::*;
@@ -40,8 +41,9 @@ impl VMManager {
         })
     }
 
-    pub fn create_vm(&self) -> Result<VirtualMachine, Error> {
-        VirtualMachine::new()
+    pub fn create_vm(&self, cores: u32) -> Result<VirtualMachine, Error> {
+        assert_eq!(cores, 1); //FIXME: currently only one core is supported
+        VirtualMachine::new(cores)
     }
     pub fn create_vcpu(&self) -> Result<VCPU, Error> {
         VCPU::create()
@@ -58,14 +60,16 @@ impl Drop for VMManager {
 #[derive(Debug)]
 pub struct VirtualMachine {
     mem_space: MemSpace,
+    cores: u32,
 }
 
 impl VirtualMachine {
     // make it private to force user to create a vm by calling create_vm to make
     // sure that hv_vm_create() is called before hv_vm_space_create() is called
-    fn new() -> Result<Self, Error> {
+    fn new(cores: u32) -> Result<Self, Error> {
         let vm = VirtualMachine {
             mem_space: MemSpace::create()?,
+            cores,
         };
         vm.gpa2hva_map()?;
         Ok(vm)
@@ -255,7 +259,6 @@ impl<'a> GuestThread<'a> {
                 }
                 _ => {
                     if reason < VMX_REASON_MAX {
-                        dbg!(reason);
                         return Err(Error::Unhandled(reason, "unable to handle"));
                     } else {
                         return Err(Error::Unhandled(reason, "unknown reason"));
@@ -294,7 +297,7 @@ mod tests {
     #[test]
     fn vthread_test() {
         let vmm = VMManager::new().unwrap();
-        let vm = vmm.create_vm().unwrap();
+        let vm = vmm.create_vm(1).unwrap();
         let vth = VThread::create(&vm, add_a).unwrap();
         let vcpu = VCPU::create().unwrap();
         vth.gth.run_on(&vcpu).unwrap();
