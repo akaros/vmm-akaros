@@ -10,6 +10,7 @@ use std::fs::{metadata, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::mem;
 use std::mem::size_of;
+use std::sync::{Arc, RwLock};
 
 const LOW_MEM_SIZE: usize = 100 * MiB;
 
@@ -183,13 +184,13 @@ impl VirtualMachine {
 }
 
 const RD_OFFSET: usize = 0x100000;
-pub fn load_linux64<'a>(
-    vm: &'a VirtualMachine,
+pub fn load_linux64(
+    vm: &Arc<RwLock<VirtualMachine>>,
     kernel_path: &str,
     rd_path: &str,
     cmd_line: &str,
     mem_size: usize,
-) -> Result<GuestThread<'a>, Error> {
+) -> Result<GuestThread, Error> {
     // dbg!(high_mem.start);
     let bp_offset = mem_size - PAGE_SIZE;
     let cmd_line_offset = bp_offset - PAGE_SIZE;
@@ -238,8 +239,11 @@ pub fn load_linux64<'a>(
     bp.hdr.type_of_loader = 0xd;
 
     let mut low_mem = MachVMBlock::new(LOW_MEM_SIZE).unwrap();
-    vm.alloc_intr_pages(&mut low_mem);
-    vm.setup_biostables(&mut low_mem);
+    {
+        let vm_ = &*vm.write().unwrap();
+        vm_.alloc_intr_pages(&mut low_mem);
+        vm_.setup_biostables(&mut low_mem);
+    }
     // load ramdisk
     let rd_meta = metadata(rd_path).unwrap();
     let mut rd_file = File::open(rd_path).unwrap();
@@ -301,7 +305,7 @@ pub fn load_linux64<'a>(
         .into_iter()
         .collect();
     Ok(GuestThread {
-        vm,
+        vm: Arc::clone(vm),
         init_regs,
         init_vmcs,
         mem_maps,

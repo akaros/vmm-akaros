@@ -1,3 +1,4 @@
+#![cfg_attr(feature = "vthread_closure", feature(fn_traits))]
 #[allow(non_upper_case_globals)]
 pub mod consts;
 mod cpuid;
@@ -25,6 +26,7 @@ use hv::{
 use mach::{vm_self_region, MachVMBlock};
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::sync::{Arc, RwLock};
 use vmexit::*;
 use x86::*;
 
@@ -96,8 +98,8 @@ impl VirtualMachine {
 }
 
 #[derive(Debug)]
-pub struct GuestThread<'a> {
-    pub vm: &'a VirtualMachine,
+pub struct GuestThread {
+    pub vm: Arc<RwLock<VirtualMachine>>,
     pub init_vmcs: HashMap<u32, u64>,
     pub init_regs: HashMap<X86Reg, u64>,
 
@@ -208,23 +210,28 @@ pub enum HandleResult {
     Next,
 }
 
-impl<'a> GuestThread<'a> {
+impl GuestThread {
     pub fn run_on(&self, vcpu: &VCPU) -> Result<(), Error> {
-        vcpu.set_space(&self.vm.mem_space)?;
+        {
+            vcpu.set_space(&(self.vm.read().unwrap()).mem_space)?;
+        }
+        {
+            let vm = self.vm.write().unwrap();
+            for (gpa, mem_block) in self.mem_maps.iter() {
+                vm.mem_space.map(
+                    mem_block.start,
+                    *gpa,
+                    mem_block.size,
+                    HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
+                )?;
+            }
+        }
         vcpu.longmode()?;
         for (field, value) in self.init_vmcs.iter() {
             vcpu.write_vmcs(*field, *value)?;
         }
         for (reg, value) in self.init_regs.iter() {
             vcpu.write_reg(*reg, *value)?;
-        }
-        for (gpa, mem_block) in self.mem_maps.iter() {
-            self.vm.mem_space.map(
-                mem_block.start,
-                *gpa,
-                mem_block.size,
-                HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
-            )?;
         }
 
         // vcpu.dump().unwrap();
@@ -236,7 +243,7 @@ impl<'a> GuestThread<'a> {
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
             result = match reason {
-                VMX_REASON_EXC_NMI => HandleResult::Next,
+                VMX_REASON_EXC_NMI => return Err(Error::Unhandled(reason, "unhandled exception")),
                 VMX_REASON_IRQ => HandleResult::Resume,
                 VMX_REASON_CPUID => cpuid::handle_cpuid(&vcpu, self),
                 VMX_REASON_HLT => HandleResult::Exit,
@@ -294,10 +301,11 @@ mod tests {
         }
     }
 
+    use std::sync::{Arc, RwLock};
     #[test]
     fn vthread_test() {
         let vmm = VMManager::new().unwrap();
-        let vm = vmm.create_vm(1).unwrap();
+        let vm = Arc::new(RwLock::new(vmm.create_vm(1).unwrap()));
         let vth = VThread::create(&vm, add_a).unwrap();
         let vcpu = VCPU::create().unwrap();
         vth.gth.run_on(&vcpu).unwrap();

@@ -9,6 +9,10 @@ build = "build.rs"
 [dependencies]
 log = "0.4"
 env_logger = "0.7.1"
+lazy_static = "1.4.0"
 
 [build-dependencies]
 cc = "1.0.46"
+
+[features]
+vthread_closure = []
