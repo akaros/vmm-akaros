@@ -5,7 +5,7 @@ use super::hv::vmx::*;
 #[allow(unused_imports)]
 use super::x86::*;
 use super::{Error, GuestThread, HandleResult, X86Reg, VCPU};
-use log::{error, info, warn};
+use log::{info, warn};
 
 fn get_creg(num: u64) -> X86Reg {
     match num {
@@ -15,7 +15,7 @@ fn get_creg(num: u64) -> X86Reg {
     }
 }
 
-pub fn handle_cr(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
+pub fn handle_cr(vcpu: &VCPU, _gth: &GuestThread) -> Result<HandleResult, Error> {
     let qual = vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?;
     let creg = get_creg(qual & 0xf);
     let access_type = (qual << 4) & 0b11;

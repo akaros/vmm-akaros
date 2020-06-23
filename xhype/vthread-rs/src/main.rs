@@ -10,5 +10,12 @@ fn main() {
     let vm = vmm.create_vm(1).unwrap();
     let gth = loader::load_linux64(&vm, &kn_path, &rd_path, &cmd_line, memsize).unwrap();
     let vcpu = vmm.create_vcpu().unwrap();
-    dbg!(gth.run_on(&vcpu));
+    match gth.run_on(&vcpu) {
+        Ok(_) => {
+            println!("guest terminates normally");
+        }
+        Err(e) => {
+            println!("guest terminates with error: {:?}", e);
+        }
+    }
 }

@@ -4,13 +4,14 @@ mod cpuid;
 pub mod err;
 #[allow(dead_code)]
 mod hv;
+#[allow(dead_code)]
 pub mod loader;
 #[allow(non_camel_case_types)]
 mod mach;
 mod paging;
 mod vmexit;
 pub mod vthread;
-// #[allow(dead_code)]
+#[allow(dead_code)]
 mod x86;
 #[allow(unused_imports)]
 use consts::msr::*;
@@ -22,7 +23,6 @@ use hv::{
     HV_MEMORY_WRITE, VCPU,
 };
 use mach::{vm_self_region, MachVMBlock};
-use paging::PAGE_SIZE;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use vmexit::*;

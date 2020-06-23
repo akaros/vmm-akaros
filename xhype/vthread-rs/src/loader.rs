@@ -4,6 +4,7 @@ use super::paging::*;
 use super::x86::*;
 use super::Error;
 use super::{GuestThread, VirtualMachine, X86Reg};
+use log::warn;
 use std::collections::HashMap;
 use std::fs::{metadata, File};
 use std::io::{Read, Seek, SeekFrom};
@@ -126,7 +127,7 @@ struct AcpiTableRsdp {
     length: u32,
     xsdt_physical_address: u64,
     extended_checksum: u8,
-    reserved: [u8; 3],
+    _reserved: [u8; 3],
 }
 
 #[repr(packed)]
@@ -146,10 +147,10 @@ fn acpi_tb_checksum<T>(buffer: &T, len: u32) -> u8 {
 const ACPI_RSDP_CHECKSUM_LENGTH: u32 = 20;
 const ACPI_RSDP_XCHECKSUM_LENGTH: u32 = 36;
 impl VirtualMachine {
-    fn alloc_intr_pages(&mut self, low_mem: &mut MachVMBlock) {
+    pub fn alloc_intr_pages(&self, low_mem: &mut MachVMBlock) {
         // fix me: allocate apic page? fee00000
         // allocate vapic and pir pages
-        let pir_offset = self.cores as usize * PAGE_SIZE;
+        // let pir_offset = self.cores as usize * PAGE_SIZE;
         for i in 0..self.cores {
             let vapic_offset = i as usize * PAGE_SIZE;
             low_mem.as_mut_slice()[vapic_offset + 0x20 / 4] = i;
@@ -157,9 +158,10 @@ impl VirtualMachine {
             low_mem.as_mut_slice()[vapic_offset + 0xd0 / 4] = 1 << i;
         }
         // Ok(())
+        warn!("unimplemented");
     }
 
-    fn setup_biostables(&mut self, low_mem: &mut MachVMBlock) {
+    pub fn setup_biostables(&self, _low_mem: &mut MachVMBlock) {
         let rsdp_offset = 0xe0000;
         let mut rdsp = AcpiTableRsdp {
             signature: *b"RSD PTR ",
@@ -173,21 +175,11 @@ impl VirtualMachine {
         debug_assert_eq!(acpi_tb_checksum(&rdsp, ACPI_RSDP_CHECKSUM_LENGTH), 0);
         rdsp.extended_checksum = 0;
         rdsp.extended_checksum = !acpi_tb_checksum(&rdsp, ACPI_RSDP_XCHECKSUM_LENGTH) + 1;
-        if (rdsp.revision >= 2) {
+        if rdsp.revision >= 2 {
             debug_assert_eq!(acpi_tb_checksum(&rdsp, ACPI_RSDP_XCHECKSUM_LENGTH), 0);
         }
-        unimplemented!()
+        warn!("unimplemented");
     }
-}
-
-pub fn load_linux<'a>(
-    vm: &'a VirtualMachine,
-    kernel_path: &str,
-    rd_path: &str,
-    cmd_line: &str,
-    mem_size: usize,
-) -> Result<GuestThread<'a>, Error> {
-    unimplemented!()
 }
 
 const RD_OFFSET: usize = 0x100000;
@@ -197,9 +189,8 @@ pub fn load_linux64<'a>(
     rd_path: &str,
     cmd_line: &str,
     mem_size: usize,
-) -> Result<GuestThread<'a>, &'static str> {
+) -> Result<GuestThread<'a>, Error> {
     // dbg!(high_mem.start);
-
     let bp_offset = mem_size - PAGE_SIZE;
     let cmd_line_offset = bp_offset - PAGE_SIZE;
     let gdt_offset = cmd_line_offset - PAGE_SIZE;
@@ -222,8 +213,7 @@ pub fn load_linux64<'a>(
         || header.loadflags & 1 == 0
         || header.relocatable_kernel == 0
     {
-        // dbg!(header);
-        return Err("kernel too old\n");
+        return Err("kernel too old\n")?;
     }
     let mut high_mem =
         MachVMBlock::new_aligned(mem_size, header.kernel_alignment as usize).unwrap();
@@ -248,7 +238,8 @@ pub fn load_linux64<'a>(
     bp.hdr.type_of_loader = 0xd;
 
     let mut low_mem = MachVMBlock::new(LOW_MEM_SIZE).unwrap();
-
+    vm.alloc_intr_pages(&mut low_mem);
+    vm.setup_biostables(&mut low_mem);
     // load ramdisk
     let rd_meta = metadata(rd_path).unwrap();
     let mut rd_file = File::open(rd_path).unwrap();
