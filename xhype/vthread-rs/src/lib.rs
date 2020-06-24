@@ -186,7 +186,7 @@ impl VCPU {
             cap2ctrl(cap_entry, VMENTRY_GUEST_IA32E),
         )?;
 
-        self.write_vmcs(VMCS_CTRL_EXC_BITMAP, 0xffffffff)?;
+        self.write_vmcs(VMCS_CTRL_EXC_BITMAP, 0xffffffff & !(1 << 14))?;
 
         let cr0 = X86_CR0_NE | X86_CR0_ET | X86_CR0_PE | X86_CR0_PG;
         self.write_vmcs(VMCS_GUEST_CR0, cr0)?;
@@ -243,7 +243,19 @@ impl GuestThread {
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
             result = match reason {
-                VMX_REASON_EXC_NMI => return Err(Error::Unhandled(reason, "unhandled exception")),
+                VMX_REASON_EXC_NMI => {
+                    let info = vcpu.read_vmcs(VMCS_RO_VMEXIT_IRQ_INFO)?;
+                    let code = vcpu.read_vmcs(VMCS_RO_VMEXIT_IRQ_ERROR)?;
+                    let valid = (info >> 31) & 1 == 1;
+                    let nmi = (info >> 12) & 1 == 1;
+                    let e_type = (info >> 8) & 0b111;
+                    let vector = info & 0xf;
+                    println!(
+                        "valid = {}, nmi = {}, type = {}, vector = {}, code = {}",
+                        valid, nmi, e_type, vector, code
+                    );
+                    return Err(Error::Unhandled(reason, "unhandled exception"));
+                }
                 VMX_REASON_IRQ => HandleResult::Resume,
                 VMX_REASON_CPUID => cpuid::handle_cpuid(&vcpu, self),
                 VMX_REASON_HLT => HandleResult::Exit,
