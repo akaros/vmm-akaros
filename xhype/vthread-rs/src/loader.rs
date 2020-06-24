@@ -13,11 +13,17 @@ use std::mem::size_of;
 use std::num::Wrapping;
 use std::sync::{Arc, RwLock};
 
-const LOW_MEM_SIZE: usize = 100 * MiB;
+const LOW64K: usize = 64 * KiB;
+const LOW_MEM_SIZE: usize = 1 * MiB;
+const RESEARVED_START: usize = 0xC0000000;
+const RESEARVED_SIZE: usize = 4 * GiB - RESEARVED_START;
+const RD_ADDR: usize = 16 * MiB;
 
 const APIC_GPA: usize = 0xfee00000;
 
 const E820_MAX: usize = 128;
+const E820_RAM: u32 = 1;
+const E820_RESERVED: u32 = 2;
 #[repr(C, packed)]
 pub struct E820Entry {
     addr: u64,
@@ -121,7 +127,7 @@ const ENTRY_64: usize = 0x200;
 // Table 5-27 RSDP Structure
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiTableRsdp {
     signature: [u8; 8],         /* ACPI signature, contains "RSD PTR " */
     checksum: u8,               /* ACPI 1.0 checksum */
@@ -139,7 +145,7 @@ const ACPI_RSDP_CHECKSUM_OFFSET: usize = 8;
 const ACPI_RSDP_XCHECKSUM_OFFSET: usize = 32;
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiTableHeader {
     signature: [u8; 4],         /* ASCII table signature */
     length: u32,                /* Length of table in bytes, including this header */
@@ -169,7 +175,7 @@ impl AcpiTableHeader {
 }
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiGenericAddress {
     space_id: u8,     /* Address space where struct or register exists */
     bit_width: u8,    /* Size in bits of given register */
@@ -179,7 +185,7 @@ struct AcpiGenericAddress {
 }
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiTableFadt {
     header: AcpiTableHeader,                 /* Common ACPI table header */
     facs: u32,                               /* 32-bit physical address of FACS */
@@ -240,7 +246,7 @@ struct AcpiTableFadt {
 }
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiTableMadt {
     header: AcpiTableHeader, /* Common ACPI table header */
     address: u32,            /* Physical address of local APIC */
@@ -248,14 +254,14 @@ struct AcpiTableMadt {
 }
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiSubtableHader {
     r#type: u8,
     length: u8,
 }
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiMadtLocalApic {
     header: AcpiSubtableHader,
     processor_id: u8, /* ACPI processor id */
@@ -264,7 +270,7 @@ struct AcpiMadtLocalApic {
 }
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiMadtIoApic {
     header: AcpiSubtableHader,
     id: u8,               /* I/O APIC ID */
@@ -274,7 +280,7 @@ struct AcpiMadtIoApic {
 }
 
 #[repr(packed)]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct AcpiMadtLocalX2apic {
     header: AcpiSubtableHader,
     reserved: u16,      /* reserved - must be zero */
@@ -290,6 +296,16 @@ fn gencsum(data: &[u8]) -> u8 {
 #[inline]
 fn acpi_tb_checksum(data: &[u8]) -> u8 {
     data.iter().map(|x| Wrapping(*x)).sum::<Wrapping<u8>>().0
+}
+
+#[inline]
+fn round_up(num: usize) -> usize {
+    (num + 0xfff) & !0xfff
+}
+
+#[inline]
+fn round_down(num: usize) -> usize {
+    num & !0xfff
 }
 
 impl VirtualMachine {
@@ -330,7 +346,7 @@ impl VirtualMachine {
             xsdt_physical_address: xsdt_offset as u64,
             ..Default::default()
         };
-        dbg!(&rdsp);
+        //dbg!(&rdsp);
         low_mem.write(rdsp, rsdp_offset, 0);
         low_mem[rsdp_offset + ACPI_RSDP_CHECKSUM_OFFSET] =
             gencsum(&low_mem[rsdp_offset..(rsdp_offset + ACPI_RSDP_CHECKSUM_LENGTH)]);
@@ -352,13 +368,13 @@ impl VirtualMachine {
             length: xsdt_total_length as u32,
             ..AcpiTableHeader::new()
         };
-        dbg!(&xsdt);
+        //dbg!(&xsdt);
         low_mem.write(xsdt, xsdt_offset, 0);
         // xsdt entries
         let mut xsdt_entries: [u64; NUM_XSDT_ENTRIES] = [0; NUM_XSDT_ENTRIES];
         xsdt_entries[0] = fadt_offset as u64;
         xsdt_entries[3] = madt_offset as u64;
-        dbg!(&xsdt_entries);
+        //dbg!(&xsdt_entries);
         low_mem.write(xsdt_entries, xsdt_entry_offset, 0);
         low_mem[xsdt_offset + ACPI_TABLE_HEADER_CHECKSUM_OFFSET] =
             gencsum(&low_mem[xsdt_offset..(xsdt_offset + xsdt_total_length)]);
@@ -376,7 +392,7 @@ impl VirtualMachine {
             xdsdt: dsdt_offset as u64,
             ..Default::default()
         };
-        dbg!(&fadt);
+        //dbg!(&fadt);
         low_mem.write(fadt, fadt_offset, 0);
         low_mem[fadt_offset + ACPI_TABLE_HEADER_CHECKSUM_OFFSET] =
             gencsum(&low_mem[fadt_offset..(fadt_offset + size_of::<AcpiTableFadt>())]);
@@ -410,7 +426,7 @@ impl VirtualMachine {
             flags: 0,
             ..Default::default()
         };
-        dbg!(&madt);
+        //dbg!(&madt);
         low_mem.write(madt, madt_offset, 0);
 
         // local apic
@@ -424,7 +440,7 @@ impl VirtualMachine {
                 id: i as u8,
                 lapic_flags: 1,
             };
-            dbg!(i, &lapic);
+            //dbg!(i, &lapic);
             low_mem.write(lapic, madt_local_apic_offset, i as usize)
         }
 
@@ -439,7 +455,7 @@ impl VirtualMachine {
             global_irq_base: 0,
             ..Default::default()
         };
-        dbg!(&io_apic);
+        //dbg!(&io_apic);
         low_mem.write(io_apic, io_apic_offset, 0);
 
         // local x2apic
@@ -454,7 +470,7 @@ impl VirtualMachine {
                 lapic_flags: 1,
                 ..Default::default()
             };
-            dbg!(i, &x2apic);
+            //dbg!(i, &x2apic);
             low_mem.write(x2apic, local_x2apic_offset, i as usize)
         }
         low_mem[madt_offset + ACPI_TABLE_HEADER_CHECKSUM_OFFSET] =
@@ -468,30 +484,22 @@ impl VirtualMachine {
     }
 }
 
-const RD_OFFSET: usize = 0x100000;
 pub fn load_linux64(
     vm: &Arc<RwLock<VirtualMachine>>,
-    kernel_path: &str,
-    rd_path: &str,
-    cmd_line: &str,
+    kernel_path: String,
+    rd_path: Option<String>,
+    cmd_line: String,
     mem_size: usize,
 ) -> Result<GuestThread, Error> {
-    // dbg!(high_mem.start);
-    let bp_offset = mem_size - PAGE_SIZE;
-    let cmd_line_offset = bp_offset - PAGE_SIZE;
-    let gdt_offset = cmd_line_offset - PAGE_SIZE;
-    let pml4_offset = gdt_offset - PAGE_SIZE;
-    let first_pdpt_offset = pml4_offset - PAGE_SIZE;
-
-    let kn_meta = metadata(kernel_path).unwrap();
-    let mut kernel_file = File::open(kernel_path).unwrap();
+    // first we make sure the kernel is not too old
+    let kn_meta = metadata(&kernel_path).unwrap();
+    let mut kernel_file = File::open(&kernel_path).unwrap();
     let header: SetupHeader = {
         let mut buff = [0u8; size_of::<SetupHeader>()];
         kernel_file.seek(SeekFrom::Start(HEADER_OFFSET)).unwrap();
         kernel_file.read_exact(&mut buff).unwrap();
         unsafe { mem::transmute(buff) }
     };
-
     if header.setup_sects == 0
         || header.boot_flag != 0xaa55
         || header.header != HDRS
@@ -501,6 +509,22 @@ pub fn load_linux64(
     {
         return Err("kernel too old\n")?;
     }
+
+    // setup low memory
+    let mut low_mem = MachVMBlock::new(LOW_MEM_SIZE).unwrap();
+    {
+        let vm_ = &*vm.read().unwrap();
+        vm_.alloc_intr_pages(&mut low_mem);
+        let bios_table_size = vm_.setup_bios_tables(0xe0000, &mut low_mem);
+        println!("bios_table_size = {:x}", bios_table_size);
+    }
+
+    let bp_offset = mem_size - PAGE_SIZE;
+    let cmd_line_offset = bp_offset - PAGE_SIZE;
+    let gdt_offset = cmd_line_offset - PAGE_SIZE;
+    let pml4_offset = gdt_offset - PAGE_SIZE;
+    let first_pdpt_offset = pml4_offset - PAGE_SIZE;
+
     let mut high_mem =
         MachVMBlock::new_aligned(mem_size, header.kernel_alignment as usize).unwrap();
     let mut bp = BootParams::new();
@@ -520,45 +544,76 @@ pub fn load_linux64(
     bp.hdr.cmd_line_ptr = (cmd_line_base & 0xffffffff) as u32;
     bp.ext_cmd_line_ptr = (cmd_line_base >> 32) as u32;
 
-    bp.hdr.hardware_subarch = 0;
-    bp.hdr.type_of_loader = 0xd;
-
-    let mut low_mem = MachVMBlock::new(LOW_MEM_SIZE).unwrap();
-    {
-        let vm_ = &*vm.write().unwrap();
-        vm_.alloc_intr_pages(&mut low_mem);
-        let bios_table_size = vm_.setup_bios_tables(0xe0000, &mut low_mem);
-        println!("bios_table_size = {:x}", bios_table_size);
-    }
+    // bp.hdr.hardware_subarch = 0;
+    // bp.hdr.type_of_loader = 0xd;
     // load ramdisk
-    let rd_meta = metadata(rd_path).unwrap();
-    let mut rd_file = File::open(rd_path).unwrap();
-    rd_file
-        .read_exact(&mut low_mem[RD_OFFSET..RD_OFFSET + rd_meta.len() as usize])
-        .unwrap();
+    let rd_size;
+    let rd_mem;
+    if let Some(rd_path) = rd_path {
+        let rd_meta = metadata(&rd_path)?;
+        let mut rd_file = File::open(&rd_path)?;
+        rd_size = rd_meta.len() as usize;
+        let mut rd_mem_block = MachVMBlock::new(round_up(rd_size))?;
+        rd_file.read_exact(&mut rd_mem_block[0..rd_size])?;
+        bp.hdr.ramdisk_image = (RD_ADDR & 0xffffffff) as u32;
+        bp.ext_ramdisk_image = (RD_ADDR >> 32) as u32;
+        bp.hdr.ramdisk_size = (rd_size & 0xffffffff) as u32;
+        bp.ext_ramdisk_size = (rd_size >> 32) as u32;
+        bp.hdr.root_dev = 0x100;
+        rd_mem = Some(rd_mem_block);
+    } else {
+        rd_size = 0;
+        rd_mem = None;
+    }
 
-    bp.hdr.ramdisk_image = (RD_OFFSET & 0xffffffff) as u32;
-    bp.ext_ramdisk_image = (RD_OFFSET >> 32) as u32;
-    let rd_size = rd_meta.len();
-    bp.hdr.ramdisk_size = (rd_size & 0xffffffff) as u32;
-    bp.ext_ramdisk_size = (rd_size >> 32) as u32;
-
-    bp.e820_table[0] = E820Entry {
+    let mut index = 0;
+    bp.e820_table[index] = E820Entry {
         addr: 0,
-        size: 0x97fc0,
-        r#type: 1,
+        size: PAGE_SIZE as u64,
+        r#type: E820_RESERVED,
     };
-    bp.e820_table[1] = E820Entry {
-        addr: RD_OFFSET as u64,
-        size: (LOW_MEM_SIZE - RD_OFFSET) as u64,
-        r#type: 1,
+    index += 1;
+    bp.e820_table[index] = E820Entry {
+        addr: PAGE_SIZE as u64,
+        size: (LOW64K - PAGE_SIZE) as u64,
+        r#type: E820_RAM,
     };
-    bp.e820_table[2] = E820Entry {
+    index += 1;
+    if rd_size > 0 {
+        bp.e820_table[index] = E820Entry {
+            addr: LOW64K as u64,
+            size: (RD_ADDR - LOW64K) as u64,
+            r#type: E820_RESERVED,
+        };
+        index += 1;
+        bp.e820_table[index] = E820Entry {
+            addr: RD_ADDR as u64,
+            size: round_up(rd_size) as u64,
+            r#type: E820_RAM,
+        };
+        index += 1;
+        let rd_end = RD_ADDR + round_up(rd_size);
+        bp.e820_table[index] = E820Entry {
+            addr: rd_end as u64,
+            size: (high_mem.start - rd_end) as u64,
+            r#type: E820_RESERVED,
+        };
+        index += 1;
+    } else {
+        bp.e820_table[index] = E820Entry {
+            addr: LOW64K as u64,
+            size: (high_mem.start - LOW64K) as u64,
+            r#type: E820_RESERVED,
+        };
+        index += 1;
+    }
+    bp.e820_table[index] = E820Entry {
         addr: high_mem.start as u64,
         size: high_mem.size as u64,
         r#type: 1,
     };
-    bp.e820_entries = 3;
+    index += 1;
+    bp.e820_entries = index as u8;
 
     high_mem.write(bp, bp_offset, 0);
 
@@ -587,9 +642,14 @@ pub fn load_linux64(
     .into_iter()
     .collect();
     let init_vmcs = HashMap::new();
-    let mem_maps = vec![(0, low_mem), (high_mem.start, high_mem)]
-        .into_iter()
-        .collect();
+    let mut mem_maps = HashMap::new();
+    mem_maps.insert(0, low_mem);
+    mem_maps.insert(high_mem.start, high_mem);
+    if let Some(rd_mem_block) = rd_mem {
+        mem_maps.insert(RD_ADDR, rd_mem_block);
+    }
+    let apic_page = MachVMBlock::new(PAGE_SIZE)?;
+    mem_maps.insert(APIC_GPA, apic_page);
     Ok(GuestThread {
         vm: Arc::clone(vm),
         init_regs,
