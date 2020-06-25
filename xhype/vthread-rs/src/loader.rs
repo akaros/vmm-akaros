@@ -627,7 +627,7 @@ pub fn load_linux64(
     let pml4e: u64 = PG_P | PG_RW | first_pdpt_base as u64;
     high_mem.write(pml4e, pml4_offset, 0);
     for i in 0..512 {
-        let pdpte: u64 = (i << 30) | PG_P | PG_RW | PG_1GB_PS;
+        let pdpte: u64 = (i << 30) | PG_P | PG_RW | PG_PS;
         high_mem.write(pdpte, first_pdpt_offset, i as usize);
     }
 

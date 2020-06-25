@@ -63,15 +63,24 @@ impl Drop for VMManager {
 pub struct VirtualMachine {
     mem_space: MemSpace,
     cores: u32,
+    pub(crate) cf8: u32,
+    pub(crate) host_bridge_data: [u32; 16],
 }
 
 impl VirtualMachine {
     // make it private to force user to create a vm by calling create_vm to make
     // sure that hv_vm_create() is called before hv_vm_space_create() is called
     fn new(cores: u32) -> Result<Self, Error> {
+        let mut host_bridge_data = [0; 16];
+        let data = [0x71908086, 0x02000006, 0x06000001]; //0:00.0 Host bridge: Intel Corporation 440BX/ZX/DX - 82443BX/ZX/DX Host bridge (rev 01)
+        for (i, n) in data.iter().enumerate() {
+            host_bridge_data[i] = *n;
+        }
         let vm = VirtualMachine {
             mem_space: MemSpace::create()?,
             cores,
+            cf8: 0,
+            host_bridge_data,
         };
         vm.gpa2hva_map()?;
         Ok(vm)
@@ -260,6 +269,7 @@ impl GuestThread {
                 VMX_REASON_CPUID => cpuid::handle_cpuid(&vcpu, self),
                 VMX_REASON_HLT => HandleResult::Exit,
                 VMX_REASON_MOV_CR => handle_cr(&vcpu, self)?,
+                VMX_REASON_IO => handle_io(&vcpu, self)?,
                 VMX_REASON_RDMSR => handle_msr_access(true, &vcpu, self)?,
                 VMX_REASON_WRMSR => handle_msr_access(false, &vcpu, self)?,
                 VMX_REASON_EPT_VIOLATION => {

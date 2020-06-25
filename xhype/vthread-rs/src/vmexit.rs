@@ -2,10 +2,88 @@
 use super::consts::msr::*;
 #[allow(unused_imports)]
 use super::hv::vmx::*;
+use super::paging::*;
 #[allow(unused_imports)]
 use super::x86::*;
 use super::{Error, GuestThread, HandleResult, X86Reg, VCPU};
-use log::{info, warn};
+use log::{error, info, trace, warn};
+use std::mem::size_of;
+
+// Fix me!
+// this function is extremely unsafe. The purpose is to read from guest's memory,
+// since the high memory address are the same as the host, we just directly read
+// the host's memory. There should be better ways to implement this.
+pub fn read_host_mem<T>(base: u64, index: u64) -> T {
+    // println!("read from base = {:x}, index = {}", base, index);
+    let ptr = (base + index * size_of::<T>() as u64) as *const T;
+    unsafe { ptr.read() }
+}
+
+fn pt_index(addr: u64) -> u64 {
+    (addr >> 12) & 0x1ff
+}
+
+fn pd_index(addr: u64) -> u64 {
+    (addr >> 21) & 0x1ff
+}
+
+fn pdpt_index(addr: u64) -> u64 {
+    (addr >> 30) & 0x1ff
+}
+
+fn pml4_index(addr: u64) -> u64 {
+    (addr >> 39) & 0x1ff
+}
+
+const ADDR_MASK: u64 = 0xffffffffffff;
+pub fn simulate_paging(vcpu: &VCPU, addr_v: u64) -> Result<u64, Error> {
+    let addr_v = ADDR_MASK & addr_v;
+    // println!("addr_v = {:x}", addr_v);
+    let cr0 = vcpu.read_reg(X86Reg::CR0)?;
+    if cr0 & X86_CR0_PG == 0 {
+        return Ok(addr_v);
+    }
+    let cr3 = vcpu.read_reg(X86Reg::CR3)?;
+    // println!("cr3 = {:x}", cr3);
+    let pml4e: u64 = read_host_mem(cr3 & !0xfff, pml4_index(addr_v));
+    // println!("pml4e = {:x}", pml4e);
+    if pml4e & PG_P == 0 {
+        return Err("simulate_paging: page fault\n")?;
+    }
+    let pdpte: u64 = read_host_mem(pml4e & !0xfff, pdpt_index(addr_v));
+    // println!("pdpte = {:x}", pdpte);
+    if pdpte & PG_P == 0 {
+        return Err("simulate_paging: page fault\n")?;
+    } else if pdpte & PG_PS > 0 {
+        return Ok((pdpte & !0x3fffffff) | (addr_v & 0x3fffffff));
+    }
+    let pde: u64 = read_host_mem(pdpte & !0xfff, pd_index(addr_v));
+    // println!("pde = {:x}", pde);
+    if pde & PG_P == 0 {
+        return Err("simulate_paging: page fault\n")?;
+    } else if pde & PG_PS > 0 {
+        return Ok((pde & !0x1fffff) | (addr_v & 0x1fffff));
+    }
+    let pte: u64 = read_host_mem(pde, pt_index(addr_v));
+    // println!("pte = {:x}", pte);
+    if pte & PG_P == 0 {
+        Err("simulate_paging: page fault\n")?
+    } else {
+        Ok((pte & !0xfff) | (addr_v & 0xfff))
+    }
+}
+
+#[allow(dead_code)]
+pub fn get_vmexit_instr(vcpu: &VCPU, _gth: &GuestThread) -> Result<Vec<u8>, Error> {
+    let len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
+    let rip_v = vcpu.read_vmcs(VMCS_GUEST_RIP)?;
+    let rip = simulate_paging(&vcpu, rip_v)?;
+    Ok((0..len).map(|i| read_host_mem::<u8>(rip, i)).collect())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_MOV_CR
+////////////////////////////////////////////////////////////////////////////////
 
 fn get_creg(num: u64) -> X86Reg {
     match num {
@@ -62,9 +140,9 @@ pub fn handle_cr(vcpu: &VCPU, _gth: &GuestThread) -> Result<HandleResult, Error>
     Ok(HandleResult::Next)
 }
 
-//
-// Handle MSR
-//
+////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_RDMSR, VMX_REASON_WRMSR
+////////////////////////////////////////////////////////////////////////////////
 
 struct MSRHander(
     pub u32,
@@ -184,5 +262,175 @@ pub fn handle_msr_access(
         Err(Error::Unhandled(VMX_REASON_RDMSR, "unkown msr"))
     } else {
         Err(Error::Unhandled(VMX_REASON_WRMSR, "unkown msr"))
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_IO
+////////////////////////////////////////////////////////////////////////////////
+fn io_size(qual: u64) -> u64 {
+    (qual & 0b111) + 1 // Vol.3, table 27-5
+}
+
+fn io_in(qual: u64) -> bool {
+    (qual >> 3) & 1 == 1
+}
+
+// fn io_str_instr(qual: u64) -> bool {
+//     (qual >> 4) & 1 == 1
+// }
+// fn io_rep_prefixed(qual: u64) -> bool {
+//     (qual >> 5) & 1 == 1
+// }
+
+// fn io_dx(qual: u64) -> bool {
+//     qual >> 6 & 1 == 0
+// }
+
+fn io_port(qual: u64) -> u16 {
+    (qual >> 16 & 0xffff) as u16
+}
+
+fn set_all_one(rax: u64, size: u64) -> u64 {
+    rax | match size {
+        1 => 0xff,
+        2 => 0xffff,
+        4 => 0xffffffff,
+        _ => unreachable!(),
+    }
+}
+
+fn set_all_zero(rax: u64, size: u64) -> u64 {
+    rax & !match size {
+        1 => 0xff,
+        2 => 0xffff,
+        4 => 0xffffffff,
+        _ => unreachable!(),
+    }
+}
+
+const CONFIG_DATA: u16 = 0xcfc;
+const CONFIG_DATA2: u16 = 0xcfe; // fix me: what does 0xcfe mean?
+const CONFIG_ADDRESS: u16 = 0xcf8;
+fn cfg_address_handler(qual: u64, vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
+    let cf8 = { gth.vm.read().unwrap().cf8 };
+    let rax = vcpu.read_reg(X86Reg::RAX)?;
+    let size = io_size(qual);
+    let port = io_port(qual);
+    let offset = cf8_offset(cf8);
+    if cf8_bdf(cf8) == 0 {
+        trace!(
+            "in = {}, rax = {:x}, port = {:x}, offset = {:x}, size = {:x}",
+            io_in(qual),
+            rax,
+            port,
+            offset,
+            size
+        );
+    }
+    if cf8_enabled(cf8) {
+        let bdf = cf8_bdf(cf8);
+        if bdf == 0 {
+            // only host bridge is supported
+            if io_in(qual) {
+                let mut v = gth.vm.read().unwrap().host_bridge_data[offset as usize >> 2];
+                if size == 1 {
+                    v >>= (port & 3) * 8;
+                } else if size == 2 {
+                    v >>= ((port & 2) >> 1) * 16;
+                }
+                info!(
+                    "return size = {}, value = 0x{:0width$x} from port = {:x}",
+                    size,
+                    v,
+                    port,
+                    width = size as usize * 2
+                );
+                vcpu.write_reg(X86Reg::RAX, set_all_zero(rax, size) | v as u64)?;
+            } else {
+                if size == 4 {
+                    gth.vm.write().unwrap().host_bridge_data[offset as usize >> 2] =
+                        (rax & 0xffffffff) as u32;
+                } else {
+                    trace!(
+                        "write data {:x} to port={:x}, offset={:x}",
+                        rax,
+                        port,
+                        offset
+                    );
+                }
+            }
+        } else {
+            if io_in(qual) {
+                trace!("bdf = {:x}, return value = all one", bdf,);
+                vcpu.write_reg(X86Reg::RAX, set_all_one(rax, size))?;
+            }
+        }
+    } else {
+        if io_in(qual) {
+            vcpu.write_reg(X86Reg::RAX, set_all_one(rax, size))?;
+        }
+    }
+    Ok(HandleResult::Next)
+}
+
+fn cf8_enabled(cf8: u32) -> bool {
+    cf8 >> 31 > 0
+}
+
+fn cf8_offset(cf8: u32) -> u32 {
+    cf8 & 0xff
+}
+
+// fn cf8_func(cf8: u32) -> u32 {
+//     (cf8 >> 8) & 0b111
+// }
+
+// fn cf8_dev(cf8: u32) -> u32 {
+//     (cf8 >> 11) & 0b11111
+// }
+
+fn cf8_bdf(cf8: u32) -> u16 {
+    ((cf8 >> 8) & 0xffff) as u16
+}
+
+// fn cf8_bus(cf8: u32) -> u32 {
+//     (cf8 >> 16) & 0xff
+// }
+
+fn cf8_handler(qual: u64, vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
+    let rax = vcpu.read_reg(X86Reg::RAX)?;
+    let size = io_size(qual);
+    if size != 4 {
+        if io_in(qual) {
+            vcpu.write_reg(X86Reg::RAX, set_all_one(rax, size))?;
+        }
+    }
+    if io_in(qual) {
+        let cf8_value = gth.vm.read().unwrap().cf8;
+        vcpu.write_reg(X86Reg::RAX, set_all_zero(rax, size) | cf8_value as u64)?;
+    } else {
+        if cf8_bdf(rax as u32) == 0 {
+            info!(
+                "set cf8 to bdf = {:x}, offset = {:x}",
+                cf8_bdf(rax as u32),
+                cf8_offset(rax as u32)
+            );
+        }
+        gth.vm.write().unwrap().cf8 = rax as u32;
+    }
+    Ok(HandleResult::Next)
+}
+
+pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
+    let qual = vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?;
+    let edx = (vcpu.read_reg(X86Reg::RDX)? & 0xffff) as u16;
+    match edx {
+        CONFIG_DATA | CONFIG_DATA2 => cfg_address_handler(qual, vcpu, gth),
+        CONFIG_ADDRESS => cf8_handler(qual, vcpu, gth),
+        _ => {
+            error!("io port = {:x}", edx);
+            unimplemented!()
+        }
     }
 }

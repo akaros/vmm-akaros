@@ -55,7 +55,7 @@ impl Builder {
         let paging_entries = paging.as_mut_slice::<u64>();
         paging_entries[0] = pml4e;
         for (i, pdpte) in paging_entries[512..].iter_mut().enumerate() {
-            *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_1GB_PS;
+            *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_PS;
         }
         let mut init_regs = HashMap::new();
         init_regs.insert(X86Reg::RIP, F::call_once as u64);
@@ -88,7 +88,7 @@ impl Builder {
         let paging_entries = paging.as_mut_slice::<u64>();
         paging_entries[0] = pml4e;
         for (i, pdpte) in paging_entries[512..].iter_mut().enumerate() {
-            *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_1GB_PS;
+            *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_PS;
         }
         let mut init_regs = HashMap::new();
         init_regs.insert(X86Reg::RIP, f as u64);
@@ -124,7 +124,7 @@ impl VThread {
         let paging_entries = paging.as_mut_slice::<u64>();
         paging_entries[0] = pml4e;
         for (i, pdpte) in paging_entries[512..].iter_mut().enumerate() {
-            *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_1GB_PS;
+            *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_PS;
         }
         let mut init_regs = HashMap::new();
         init_regs.insert(X86Reg::RIP, entry as u64);
