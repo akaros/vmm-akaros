@@ -1,8 +1,8 @@
 #![cfg_attr(feature = "vthread_closure", feature(fn_traits))]
 use std::env;
 use std::sync::{Arc, RwLock};
-use vthread_rs::vthread::Builder;
-use vthread_rs::{loader, VMManager};
+use xhype::vthread::Builder;
+use xhype::{loader, VMManager};
 
 static mut NUM_A: i32 = 4;
 static mut NUM_B: i32 = 2;

@@ -33,5 +33,5 @@
 /vmm
 
 # xhype
-xhype/vthread-rs/target
-xhype/vthread-rs/Cargo.lock
+xhype/xhype/target
+xhype/xhype/Cargo.lock

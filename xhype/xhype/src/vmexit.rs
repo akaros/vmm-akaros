@@ -223,14 +223,19 @@ fn emsr_rdonly(
     _gth: &GuestThread,
 ) -> Result<HandleResult, Error> {
     if read {
-        write_msr_to_reg(0, vcpu)
+        let r = match msr {
+            MSR_MTRRcap | MSR_IA32_BIOS_SIGN_ID => 0,
+            _ => unreachable!()
+        };
+        write_msr_to_reg(r, vcpu)
     } else {
         warn!("write {:x} to read-only msr {:x}", new_value, msr);
         Ok(HandleResult::Next)
     }
 }
 
-const MSR_HANDLERS: [MSRHander; 4] = [
+const MSR_HANDLERS: [MSRHander; 5] = [
+    MSRHander(MSR_MTRRcap, emsr_rdonly),
     MSRHander(MSR_IA32_BIOS_SIGN_ID, emsr_rdonly),
     MSRHander(MSR_IA32_MISC_ENABLE, emsr_miscenable),
     MSRHander(MSR_LAPIC_ICR, emsr_unimpl),
@@ -247,10 +252,10 @@ pub fn handle_msr_access(
         let rdx = vcpu.read_reg(X86Reg::RDX)?;
         let rax = vcpu.read_reg(X86Reg::RAX)?;
         let v = (rdx << 32) | rax;
-        info!("write msr = {:x}, new_value = {:x}", ecx, v);
+        info!("write msr = {:08x}, new_value = {:x}", ecx, v);
         v
     } else {
-        info!("read msr = {:x}", ecx);
+        info!("read msr = {:08x}", ecx);
         0
     };
     for handler in MSR_HANDLERS.iter() {
@@ -259,9 +264,9 @@ pub fn handle_msr_access(
         }
     }
     if read {
-        Err(Error::Unhandled(VMX_REASON_RDMSR, "unkown msr"))
+        Err(Error::Unhandled(VMX_REASON_RDMSR, "read unknown msr"))
     } else {
-        Err(Error::Unhandled(VMX_REASON_WRMSR, "unkown msr"))
+        Err(Error::Unhandled(VMX_REASON_WRMSR, "write unknown msr"))
     }
 }
 

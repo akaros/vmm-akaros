@@ -436,14 +436,17 @@ impl Drop for VCPU {
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+    use super::vmx::*;
     #[test]
     fn hv_vcpu_test() {
         vm_create(0).unwrap();
-        println!("pin cap={:x}", vmx_read_capability(VMXCap::ENTRY).unwrap());
+        println!("cpu2 cap={:x}", vmx_read_capability(VMXCap::CPU2).unwrap());
+        let cpu2_cap = vmx_read_capability(VMXCap::CPU2).unwrap();
         {
             let vcpu = VCPU::create().unwrap();
             vcpu.write_reg(X86Reg::RFLAGS, 0x2u64).unwrap();
             assert_eq!(vcpu.read_reg(X86Reg::RFLAGS).unwrap(), 0x2u64);
+            println!("vapic addr = {:x}", vcpu.read_vmcs(VMCS_CTRL_APIC_ACCESS).unwrap());
         }
         {
             let vcpu = VCPU::create().unwrap();
