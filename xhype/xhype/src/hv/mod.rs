@@ -88,7 +88,7 @@ pub struct MemSpace {
     id: u32,
 }
 
-pub const DEFAULT_MEM_SPACE: MemSpace = MemSpace { id: 0 };
+pub static DEFAULT_MEM_SPACE: MemSpace = MemSpace { id: 0 };
 
 impl MemSpace {
     pub fn create() -> Result<Self, Error> {
@@ -99,25 +99,31 @@ impl MemSpace {
         }
     }
 
-    pub fn destroy(&self) -> Result<(), Error> {
+    fn destroy(&self) -> Result<(), Error> {
         check_ret(
             unsafe { hv_vm_space_destroy(self.id) },
             "hv_vm_space_destroy",
         )
     }
 
-    pub fn map(&self, uva: usize, gpa: usize, size: usize, flags: u64) -> Result<(), Error> {
+    pub fn map(&mut self, uva: usize, gpa: usize, size: usize, flags: u64) -> Result<(), Error> {
         check_ret(
             unsafe { hv_vm_map_space(self.id, uva, gpa, size, flags) },
             "hv_vm_map_space",
         )
     }
 
-    pub fn unmap(&self, gpa: usize, size: usize) -> Result<(), Error> {
+    pub fn unmap(&mut self, gpa: usize, size: usize) -> Result<(), Error> {
         check_ret(
             unsafe { hv_vm_unmap_space(self.id, gpa, size) },
             "hv_vm_unmap_space",
         )
+    }
+}
+
+impl Drop for MemSpace {
+    fn drop(&mut self) {
+        self.destroy().unwrap();
     }
 }
 
@@ -428,15 +434,14 @@ impl VCPU {
 
 impl Drop for VCPU {
     fn drop(&mut self) {
-        self.set_space(&DEFAULT_MEM_SPACE).unwrap();
         check_ret(unsafe { hv_vcpu_destroy(self.id) }, "hv_vcpu_destroy").unwrap();
     }
 }
 
 mod tests {
+    use super::vmx::*;
     #[allow(unused_imports)]
     use super::*;
-    use super::vmx::*;
     #[test]
     fn hv_vcpu_test() {
         vm_create(0).unwrap();
@@ -446,7 +451,10 @@ mod tests {
             let vcpu = VCPU::create().unwrap();
             vcpu.write_reg(X86Reg::RFLAGS, 0x2u64).unwrap();
             assert_eq!(vcpu.read_reg(X86Reg::RFLAGS).unwrap(), 0x2u64);
-            println!("vapic addr = {:x}", vcpu.read_vmcs(VMCS_CTRL_APIC_ACCESS).unwrap());
+            println!(
+                "vapic addr = {:x}",
+                vcpu.read_vmcs(VMCS_CTRL_APIC_ACCESS).unwrap()
+            );
         }
         {
             let vcpu = VCPU::create().unwrap();
@@ -462,5 +470,21 @@ mod tests {
         let vcpu_cap = capability(HVCap::HV_CAP_VCPUMAX).unwrap();
         let space_cap = capability(HVCap::HV_CAP_ADDRSPACEMAX).unwrap();
         println!("vcpu max = {}, space cap = {}.", vcpu_cap, space_cap)
+    }
+
+    #[test]
+    fn hv_mem_space_drop_test() {
+        vm_create(0).unwrap();
+        let space1_id;
+        {
+            let space1 = MemSpace::create().unwrap();
+            space1_id = space1.id;
+        }
+        let space2_id;
+        {
+            let space2 = MemSpace::create().unwrap();
+            space2_id = space2.id;
+        }
+        assert_eq!(space1_id, space2_id);
     }
 }

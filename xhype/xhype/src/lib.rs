@@ -20,8 +20,8 @@ use err::Error;
 use hv::vmx::*;
 use hv::X86Reg;
 use hv::{
-    cap2ctrl, vmx_read_capability, MemSpace, VMXCap, HV_MEMORY_EXEC, HV_MEMORY_READ,
-    HV_MEMORY_WRITE, VCPU,
+    cap2ctrl, vmx_read_capability, MemSpace, VMXCap, DEFAULT_MEM_SPACE, HV_MEMORY_EXEC,
+    HV_MEMORY_READ, HV_MEMORY_WRITE, VCPU,
 };
 use mach::{vm_self_region, MachVMBlock};
 use std::collections::HashMap;
@@ -83,7 +83,7 @@ impl VirtualMachine {
         for (i, n) in data.iter().enumerate() {
             host_bridge_data[i] = *n;
         }
-        let vm = VirtualMachine {
+        let mut vm = VirtualMachine {
             mem_space: MemSpace::create()?,
             cores,
             cf8: 0,
@@ -107,7 +107,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn gpa2hva_map(&self) -> Result<(), Error> {
+    fn gpa2hva_map(&mut self) -> Result<(), Error> {
         let mut trial_addr = 1;
         loop {
             match vm_self_region(trial_addr) {
@@ -244,6 +244,11 @@ impl GuestThread {
         {
             vcpu.set_space(&(self.vm.read().unwrap()).mem_space)?;
         }
+        let result = self.run_on_inner(vcpu);
+        vcpu.set_space(&DEFAULT_MEM_SPACE)?;
+        result
+    }
+    fn run_on_inner(&self, vcpu: &VCPU) -> Result<(), Error> {
         vcpu.longmode()?;
         for (field, value) in self.init_vmcs.iter() {
             vcpu.write_vmcs(*field, *value)?;
