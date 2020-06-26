@@ -47,39 +47,34 @@ impl Builder {
         F: Send + 'static,
     {
         let stack_size = (self.stack_size.unwrap_or(VTHREAD_STACK_SIZE) >> 3) << 3;
-        let mut vthread_stack = MachVMBlock::new(stack_size)?;
-        let stack_top = vthread_stack.start + vthread_stack.size - size_of::<usize>();
-        vthread_stack.write(hlt as usize, stack_top - vthread_stack.start, 0);
-        let mut paging = MachVMBlock::new(PAGING_SIZE)?;
-        let pml4e: u64 = PG_P | PG_RW | (paging.start as u64 + PAGE_SIZE as u64);
-        let paging_entries = paging.as_mut_slice::<u64>();
-        paging_entries[0] = pml4e;
-        for (i, pdpte) in paging_entries[512..].iter_mut().enumerate() {
-            *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_PS;
-        }
-        let mut init_regs = HashMap::new();
-        init_regs.insert(X86Reg::RIP, F::call_once as u64);
-        init_regs.insert(X86Reg::RFLAGS, FL_RSVD_1);
-        init_regs.insert(X86Reg::RSP, stack_top as u64);
-        init_regs.insert(X86Reg::CR3, paging.start as u64);
-        let mut mem_maps = HashMap::new();
-        mem_maps.insert(vthread_stack.start, vthread_stack);
-        mem_maps.insert(paging.start, paging);
-        let gth = GuestThread {
-            vm: self.vm,
-            init_regs: init_regs,
-            init_vmcs: HashMap::new(),
-            mem_maps: mem_maps,
-        };
-        Ok(thread::Builder::new().spawn(move || {
-            let vcpu = VCPU::create().unwrap();
-            gth.run_on(&vcpu).unwrap();
-        })?)
+        let vth = VThread::new(&self.vm, stack_size, F::call_once as usize)?;
+        Ok(thread::Builder::new()
+            .name(self.name.unwrap_or("<unnamed-vthread>".to_string()))
+            .spawn(move || {
+                let vcpu = VCPU::create().unwrap();
+                vth.gth.run_on(&vcpu).unwrap();
+            })?)
     }
 
     #[cfg(not(feature = "vthread_closure"))]
     pub fn spawn(self, f: fn() -> ()) -> Result<thread::JoinHandle<()>, Error> {
         let stack_size = (self.stack_size.unwrap_or(VTHREAD_STACK_SIZE) >> 3) << 3;
+        let vth = VThread::new(&self.vm, stack_size, f as usize)?;
+        Ok(thread::Builder::new()
+            .name(self.name.unwrap_or("<unnamed-vthread>".to_string()))
+            .spawn(move || {
+                let vcpu = VCPU::create().unwrap();
+                vth.gth.run_on(&vcpu).unwrap();
+            })?)
+    }
+}
+
+impl VThread {
+    fn new(
+        vm: &Arc<RwLock<VirtualMachine>>,
+        stack_size: usize,
+        entry: usize,
+    ) -> Result<Self, Error> {
         let mut vthread_stack = MachVMBlock::new(stack_size)?;
         let stack_top = vthread_stack.start + vthread_stack.size - size_of::<usize>();
         vthread_stack.write(hlt as usize, stack_top - vthread_stack.start, 0);
@@ -90,56 +85,53 @@ impl Builder {
         for (i, pdpte) in paging_entries[512..].iter_mut().enumerate() {
             *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_PS;
         }
-        let mut init_regs = HashMap::new();
-        init_regs.insert(X86Reg::RIP, f as u64);
-        init_regs.insert(X86Reg::RFLAGS, FL_RSVD_1);
-        init_regs.insert(X86Reg::RSP, stack_top as u64);
-        init_regs.insert(X86Reg::CR3, paging.start as u64);
-        let mut mem_maps = HashMap::new();
-        mem_maps.insert(vthread_stack.start, vthread_stack);
-        mem_maps.insert(paging.start, paging);
+        let init_regs = vec![
+            (X86Reg::RIP, entry as u64),
+            (X86Reg::RFLAGS, FL_RSVD_1),
+            (X86Reg::RSP, stack_top as u64),
+            (X86Reg::CR3, paging.start as u64),
+        ]
+        .into_iter()
+        .collect();
+        let mem_maps = vec![(vthread_stack.start, vthread_stack), (paging.start, paging)]
+            .into_iter()
+            .collect();
+        {
+            let mut vm = vm.write().unwrap();
+            vm.map_guest_mem(mem_maps)?;
+        }
         let gth = GuestThread {
-            vm: self.vm,
+            vm: Arc::clone(vm),
+            id: 0,
             init_regs: init_regs,
             init_vmcs: HashMap::new(),
-            mem_maps: mem_maps,
         };
-        Ok(thread::Builder::new().spawn(move || {
-            let vcpu = VCPU::create().unwrap();
-            gth.run_on(&vcpu).unwrap();
-        })?)
+        Ok(VThread { gth })
     }
 }
 
-impl VThread {
-    pub fn create(
-        vm: &Arc<RwLock<VirtualMachine>>,
-        entry: unsafe extern "C" fn() -> (),
-    ) -> Result<Self, Error> {
-        let mut vthread_stack = MachVMBlock::new(VTHREAD_STACK_SIZE)?;
-        let stack_top = vthread_stack.start + vthread_stack.size - size_of::<usize>();
-        vthread_stack.write(hlt as usize, stack_top - vthread_stack.start, 0);
-        let mut paging = MachVMBlock::new(PAGING_SIZE)?;
-        let pml4e: u64 = PG_P | PG_RW | (paging.start as u64 + PAGE_SIZE as u64);
-        let paging_entries = paging.as_mut_slice::<u64>();
-        paging_entries[0] = pml4e;
-        for (i, pdpte) in paging_entries[512..].iter_mut().enumerate() {
-            *pdpte = ((i as u64) << 30) | PG_P | PG_RW | PG_PS;
+#[cfg(test)]
+mod tests {
+    use super::VThread;
+    use crate::{VMManager, VCPU};
+
+    static mut NUM_A: i32 = 1;
+    extern "C" fn add_a() {
+        unsafe {
+            NUM_A += 3;
         }
-        let mut init_regs = HashMap::new();
-        init_regs.insert(X86Reg::RIP, entry as u64);
-        init_regs.insert(X86Reg::RFLAGS, FL_RSVD_1);
-        init_regs.insert(X86Reg::RSP, stack_top as u64);
-        init_regs.insert(X86Reg::CR3, paging.start as u64);
-        let mut mem_maps = HashMap::new();
-        mem_maps.insert(vthread_stack.start, vthread_stack);
-        mem_maps.insert(paging.start, paging);
-        let gth = GuestThread {
-            vm: Arc::clone(vm),
-            init_regs: init_regs,
-            init_vmcs: HashMap::new(),
-            mem_maps: mem_maps,
-        };
-        Ok(VThread { gth })
+    }
+
+    use std::sync::{Arc, RwLock};
+    #[test]
+    fn vthread_test() {
+        let vmm = VMManager::new().unwrap();
+        let vm = Arc::new(RwLock::new(vmm.create_vm(1).unwrap()));
+        let vth = VThread::new(&vm, 4096, add_a as usize).unwrap();
+        let vcpu = VCPU::create().unwrap();
+        vth.gth.run_on(&vcpu).unwrap();
+        unsafe {
+            assert_eq!(NUM_A, 4);
+        }
     }
 }

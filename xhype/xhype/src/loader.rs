@@ -490,7 +490,7 @@ pub fn load_linux64(
     rd_path: Option<String>,
     cmd_line: String,
     mem_size: usize,
-) -> Result<GuestThread, Error> {
+) -> Result<Vec<GuestThread>, Error> {
     // first we make sure the kernel is not too old
     let kn_meta = metadata(&kernel_path).unwrap();
     let mut kernel_file = File::open(&kernel_path).unwrap();
@@ -641,7 +641,6 @@ pub fn load_linux64(
     ]
     .into_iter()
     .collect();
-    let init_vmcs = HashMap::new();
     let mut mem_maps = HashMap::new();
     mem_maps.insert(0, low_mem);
     mem_maps.insert(high_mem.start, high_mem);
@@ -650,12 +649,23 @@ pub fn load_linux64(
     }
     let apic_page = MachVMBlock::new(PAGE_SIZE)?;
     mem_maps.insert(APIC_GPA, apic_page);
-    Ok(GuestThread {
-        vm: Arc::clone(vm),
-        init_regs,
-        init_vmcs,
-        mem_maps,
-    })
+    let num_gth;
+    {
+        let vm_ = &mut *vm.write().unwrap();
+        vm_.map_guest_mem(mem_maps)?;
+        num_gth = vm_.cores;
+    }
+    let mut guest_threads = vec![];
+    for i in 0..num_gth {
+        guest_threads.push(GuestThread {
+            id: i,
+            vm: Arc::clone(vm),
+            init_regs: HashMap::new(),
+            init_vmcs: HashMap::new(),
+        });
+    }
+    guest_threads[0].init_regs = init_regs;
+    Ok(guest_threads)
 }
 
 mod test {

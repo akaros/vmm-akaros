@@ -59,12 +59,19 @@ impl Drop for VMManager {
     }
 }
 
+/// A VirtualMachine is the physical hardware seen by a guest, including physical
+/// memory, number of cpu cores, etc.
 #[derive(Debug)]
 pub struct VirtualMachine {
     mem_space: MemSpace,
     cores: u32,
     pub(crate) cf8: u32,
     pub(crate) host_bridge_data: [u32; 16],
+    /// the memory that is specifically allocated for the guest. For a vthread,
+    /// it contains its stack and a paging structure. For a kernel, it contains
+    /// its bios tables, APIC pages, high memory, etc.
+    /// guest virtual address -> host VM block
+    pub(crate) guest_mmap: HashMap<usize, MachVMBlock>,
 }
 
 impl VirtualMachine {
@@ -81,9 +88,23 @@ impl VirtualMachine {
             cores,
             cf8: 0,
             host_bridge_data,
+            guest_mmap: HashMap::new(),
         };
         vm.gpa2hva_map()?;
         Ok(vm)
+    }
+
+    fn map_guest_mem(&mut self, maps: HashMap<usize, MachVMBlock>) -> Result<(), Error> {
+        self.guest_mmap = maps;
+        for (gpa, mem_block) in self.guest_mmap.iter() {
+            self.mem_space.map(
+                mem_block.start,
+                *gpa,
+                mem_block.size,
+                HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
+            )?;
+        }
+        Ok(())
     }
 
     fn gpa2hva_map(&self) -> Result<(), Error> {
@@ -109,10 +130,9 @@ impl VirtualMachine {
 #[derive(Debug)]
 pub struct GuestThread {
     pub vm: Arc<RwLock<VirtualMachine>>,
+    pub id: u32,
     pub init_vmcs: HashMap<u32, u64>,
     pub init_regs: HashMap<X86Reg, u64>,
-
-    pub mem_maps: HashMap<usize, MachVMBlock>, // gpa -> host VM block
 }
 
 impl VCPU {
@@ -224,17 +244,6 @@ impl GuestThread {
         {
             vcpu.set_space(&(self.vm.read().unwrap()).mem_space)?;
         }
-        {
-            let vm = self.vm.write().unwrap();
-            for (gpa, mem_block) in self.mem_maps.iter() {
-                vm.mem_space.map(
-                    mem_block.start,
-                    *gpa,
-                    mem_block.size,
-                    HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
-                )?;
-            }
-        }
         vcpu.longmode()?;
         for (field, value) in self.init_vmcs.iter() {
             vcpu.write_vmcs(*field, *value)?;
@@ -309,30 +318,4 @@ impl GuestThread {
 
 extern "C" {
     pub fn hlt();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::vthread::VThread;
-    use super::{VMManager, VCPU};
-
-    static mut NUM_A: i32 = 1;
-    extern "C" fn add_a() {
-        unsafe {
-            NUM_A += 3;
-        }
-    }
-
-    use std::sync::{Arc, RwLock};
-    #[test]
-    fn vthread_test() {
-        let vmm = VMManager::new().unwrap();
-        let vm = Arc::new(RwLock::new(vmm.create_vm(1).unwrap()));
-        let vth = VThread::create(&vm, add_a).unwrap();
-        let vcpu = VCPU::create().unwrap();
-        vth.gth.run_on(&vcpu).unwrap();
-        unsafe {
-            assert_eq!(NUM_A, 4);
-        }
-    }
 }

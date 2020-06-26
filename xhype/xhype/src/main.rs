@@ -20,12 +20,15 @@ fn change_b() {
 }
 
 fn vthread_test() {
+    println!("initially, a = {}, b = {}", unsafe { NUM_A }, unsafe {
+        NUM_B
+    });
     let vmm = VMManager::new().unwrap();
     let vm = Arc::new(RwLock::new(vmm.create_vm(1).unwrap()));
     let vth_a = if cfg!(feature = "vthread_closure") {
         Builder::new(&vm)
             .spawn(|| unsafe {
-                NUM_A = 2;
+                NUM_A = 3;
             })
             .unwrap()
     } else {
@@ -34,15 +37,18 @@ fn vthread_test() {
     let vth_b = if cfg!(feature = "vthread_closure") {
         Builder::new(&vm)
             .spawn(|| unsafe {
-                NUM_B = 100;
+                NUM_B = 101;
             })
             .unwrap()
     } else {
-        Builder::new(&vm).spawn(change_b).unwrap()
+        Builder::new(&vm)
+            .name("vth_b".to_string())
+            .spawn(change_b)
+            .unwrap()
     };
     vth_a.join().unwrap();
     vth_b.join().unwrap();
-    println!("a = {}, b={}", unsafe { NUM_A }, unsafe { NUM_B });
+    println!("a = {}, b = {}", unsafe { NUM_A }, unsafe { NUM_B });
 }
 
 fn kernel_test() {
@@ -52,9 +58,9 @@ fn kernel_test() {
     let rd_path = env::var("RD_PATH").ok();
     let cmd_line = env::var("CMD_Line").unwrap_or("auto".to_string());
     let vm = Arc::new(RwLock::new(vmm.create_vm(1).unwrap()));
-    let gth = loader::load_linux64(&vm, kn_path, rd_path, cmd_line, memsize).unwrap();
+    let gths = loader::load_linux64(&vm, kn_path, rd_path, cmd_line, memsize).unwrap();
     let vcpu = vmm.create_vcpu().unwrap();
-    match gth.run_on(&vcpu) {
+    match gths[0].run_on(&vcpu) {
         Ok(_) => {
             println!("guest terminates normally");
         }
