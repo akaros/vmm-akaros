@@ -309,18 +309,21 @@ fn round_down(num: usize) -> usize {
 }
 
 impl VirtualMachine {
-    pub fn alloc_intr_pages(&self, low_mem: &mut MachVMBlock) {
+    pub fn alloc_intr_pages(&self) -> Result<MachVMBlock, Error> {
         // fix me: allocate apic page? fee00000
         // allocate vapic and pir pages
-        // let pir_offset = self.cores as usize * PAGE_SIZE;
+        // first self.cores pages are for vapic_page, the second self.cores are
+        // for posted irq
+        let total_size = self.cores as usize * PAGE_SIZE * 2;
+        let mut vapic_block = MachVMBlock::new(total_size)?;
+
         for i in 0..self.cores {
             let vapic_offset = i as usize * PAGE_SIZE;
-            low_mem.as_mut_slice()[vapic_offset + 0x20 / 4] = i;
-            low_mem.as_mut_slice()[vapic_offset + 0x30 / 4] = 0x01060015u32;
-            low_mem.as_mut_slice()[vapic_offset + 0xd0 / 4] = 1 << i;
+            vapic_block.write(i as u32, vapic_offset + 0x20, 0);
+            vapic_block.write(0x01060015u32, vapic_offset + 0x30, 0);
+            vapic_block.write((1 << i) as u32, vapic_offset + 0xd0, 0);
         }
-        // Ok(())
-        warn!("unimplemented");
+        Ok(vapic_block)
     }
 
     pub fn setup_bios_tables(&self, start: usize, low_mem: &mut MachVMBlock) -> usize {
@@ -512,12 +515,14 @@ pub fn load_linux64(
 
     // setup low memory
     let mut low_mem = MachVMBlock::new(LOW_MEM_SIZE).unwrap();
+    let vapic_block;
     {
         let vm_ = &*vm.read().unwrap();
-        vm_.alloc_intr_pages(&mut low_mem);
+        vapic_block = vm_.alloc_intr_pages()?;
         let bios_table_size = vm_.setup_bios_tables(0xe0000, &mut low_mem);
         println!("bios_table_size = {:x}", bios_table_size);
     }
+    let vapic_block_start = vapic_block.start;
 
     let bp_offset = mem_size - PAGE_SIZE;
     let cmd_line_offset = bp_offset - PAGE_SIZE;
@@ -649,6 +654,7 @@ pub fn load_linux64(
     }
     let apic_page = MachVMBlock::new(PAGE_SIZE)?;
     mem_maps.insert(APIC_GPA, apic_page);
+    mem_maps.insert(vapic_block_start, vapic_block);
     let num_gth;
     {
         let vm_ = &mut *vm.write().unwrap();
@@ -662,6 +668,8 @@ pub fn load_linux64(
             vm: Arc::clone(vm),
             init_regs: HashMap::new(),
             init_vmcs: HashMap::new(),
+            vapic_addr: vapic_block_start + i as usize * PAGE_SIZE,
+            posted_irq_desc: vapic_block_start + (i + num_gth) as usize * PAGE_SIZE,
         });
     }
     guest_threads[0].init_regs = init_regs;

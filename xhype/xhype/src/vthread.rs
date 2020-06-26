@@ -105,6 +105,8 @@ impl VThread {
             id: 0,
             init_regs: init_regs,
             init_vmcs: HashMap::new(),
+            vapic_addr: 0,
+            posted_irq_desc: 0,
         };
         Ok(VThread { gth })
     }

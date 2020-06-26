@@ -145,6 +145,8 @@ pub struct GuestThread {
     pub id: u32,
     pub init_vmcs: HashMap<u32, u64>,
     pub init_regs: HashMap<X86Reg, u64>,
+    vapic_addr: usize,
+    posted_irq_desc: usize,
 }
 
 impl VCPU {
@@ -221,7 +223,11 @@ impl VCPU {
                 CPU_BASED_HLT | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE,
             ),
         )?;
-        self.write_vmcs(VMCS_CTRL_CPU_BASED2, cap2ctrl(cap_cpu2, CPU_BASED2_RDTSCP))?;
+        // Hypervisor.framework does not support X2APIC virtualization
+        self.write_vmcs(
+            VMCS_CTRL_CPU_BASED2,
+            cap2ctrl(cap_cpu2, CPU_BASED2_RDTSCP | CPU_BASED2_VIRTUAL_APIC),
+        )?;
         self.write_vmcs(
             VMCS_CTRL_VMENTRY_CONTROLS,
             cap2ctrl(cap_entry, VMENTRY_GUEST_IA32E),
@@ -252,7 +258,13 @@ pub enum HandleResult {
 }
 
 impl GuestThread {
-    pub fn run_on(&self, vcpu: &VCPU) -> Result<(), Error> {
+    pub fn start(self) -> std::thread::JoinHandle<Result<(), Error>> {
+        std::thread::spawn(move || {
+            let vcpu = VCPU::create()?;
+            self.run_on(&vcpu)
+        })
+    }
+    pub(crate) fn run_on(&self, vcpu: &VCPU) -> Result<(), Error> {
         {
             vcpu.set_space(&(self.vm.read().unwrap()).mem_space)?;
         }
@@ -261,6 +273,7 @@ impl GuestThread {
         result
     }
     fn run_on_inner(&self, vcpu: &VCPU) -> Result<(), Error> {
+        vcpu.set_vapic_address(self.vapic_addr)?;
         vcpu.longmode()?;
         for (field, value) in self.init_vmcs.iter() {
             vcpu.write_vmcs(*field, *value)?;

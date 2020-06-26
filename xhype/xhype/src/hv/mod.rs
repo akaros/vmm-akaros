@@ -136,7 +136,12 @@ pub fn vmx_read_capability(field: VMXCap) -> Result<u64, Error> {
 }
 
 pub fn cap2ctrl(cap: u64, ctrl: u64) -> u64 {
-    (ctrl | (cap & 0xffffffff)) & (cap >> 32)
+    let low = cap & 0xffffffff;
+    let high = cap >> 32;
+    let r = ctrl | low;
+    debug_assert_eq!(r & high, r);
+    r
+    // (ctrl | (cap & 0xffffffff)) & (cap >> 32)
 }
 
 #[allow(non_camel_case_types)]
@@ -428,6 +433,12 @@ impl VCPU {
         check_ret(
             unsafe { hv_vmx_vcpu_write_vmcs(self.id, field, value) },
             "hv_vmx_vcpu_write_vmcs",
+        )
+    }
+    pub fn set_vapic_address(&self, address: usize) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vmx_vcpu_set_apic_address(self.id, address) },
+            "hv_vmx_vcpu_set_apic_address",
         )
     }
 }
