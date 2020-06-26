@@ -30,6 +30,10 @@ use std::sync::{Arc, RwLock};
 use vmexit::*;
 use x86::*;
 
+////////////////////////////////////////////////////////////////////////////////
+// VMManager
+////////////////////////////////////////////////////////////////////////////////
+
 // only one vmm is allowed to be created per process
 pub struct VMManager {
     marker: PhantomData<()>, // add a PhantomData here to prevent user from constructing VMM by VMManager{}
@@ -59,9 +63,12 @@ impl Drop for VMManager {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// VirtualMachine
+////////////////////////////////////////////////////////////////////////////////
+
 /// A VirtualMachine is the physical hardware seen by a guest, including physical
 /// memory, number of cpu cores, etc.
-#[derive(Debug)]
 pub struct VirtualMachine {
     mem_space: MemSpace,
     cores: u32,
@@ -72,6 +79,7 @@ pub struct VirtualMachine {
     /// its bios tables, APIC pages, high memory, etc.
     /// guest virtual address -> host VM block
     pub(crate) guest_mmap: HashMap<usize, MachVMBlock>,
+    pub vmcall_hander: fn(&VCPU, &GuestThread) -> Result<HandleResult, Error>,
 }
 
 impl VirtualMachine {
@@ -89,6 +97,7 @@ impl VirtualMachine {
             cf8: 0,
             host_bridge_data,
             guest_mmap: HashMap::new(),
+            vmcall_hander: default_vmcall_handler,
         };
         vm.gpa2hva_map()?;
         Ok(vm)
@@ -127,7 +136,10 @@ impl VirtualMachine {
     }
 }
 
-#[derive(Debug)]
+////////////////////////////////////////////////////////////////////////////////
+// GuestThread
+////////////////////////////////////////////////////////////////////////////////
+
 pub struct GuestThread {
     pub vm: Arc<RwLock<VirtualMachine>>,
     pub id: u32,
@@ -282,6 +294,7 @@ impl GuestThread {
                 VMX_REASON_IRQ => HandleResult::Resume,
                 VMX_REASON_CPUID => cpuid::handle_cpuid(&vcpu, self),
                 VMX_REASON_HLT => HandleResult::Exit,
+                VMX_REASON_VMCALL => handle_vmcall(&vcpu, self)?,
                 VMX_REASON_MOV_CR => handle_cr(&vcpu, self)?,
                 VMX_REASON_IO => handle_io(&vcpu, self)?,
                 VMX_REASON_RDMSR => handle_msr_access(true, &vcpu, self)?,
@@ -323,4 +336,11 @@ impl GuestThread {
 
 extern "C" {
     pub fn hlt();
+    pub fn raw_vmcall(num: u64, args: *const u8);
+}
+
+pub fn vmcall(num: u64, args: *const u8) {
+    unsafe {
+        raw_vmcall(num, args);
+    }
 }

@@ -2,7 +2,7 @@
 use std::env;
 use std::sync::{Arc, RwLock};
 use xhype::vthread::Builder;
-use xhype::{loader, VMManager};
+use xhype::{loader, vmcall, VMManager};
 
 static mut NUM_A: i32 = 4;
 static mut NUM_B: i32 = 2;
@@ -10,6 +10,7 @@ static mut NUM_B: i32 = 2;
 fn change_a() {
     unsafe {
         NUM_A = 2;
+        vmcall(1, &GOOD_STR as *const &str as *const u8);
     }
 }
 
@@ -18,6 +19,8 @@ fn change_b() {
         NUM_B = 100;
     }
 }
+
+const GOOD_STR: &str = "good";
 
 fn vthread_test() {
     println!("initially, a = {}, b = {}", unsafe { NUM_A }, unsafe {
@@ -29,6 +32,7 @@ fn vthread_test() {
         Builder::new(&vm)
             .spawn(|| unsafe {
                 NUM_A = 3;
+                vmcall(1, &GOOD_STR as *const &str as *const u8);
             })
             .unwrap()
     } else {

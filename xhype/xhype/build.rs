@@ -3,4 +3,5 @@ fn main() {
 
 	cc::Build::new().file("c_src/cpuid.c").compile("cpuid");
 	cc::Build::new().file("c_src/hlt.s").compile("hlt");
+	cc::Build::new().file("c_src/vmcall.c").compile("vmcall");
 }

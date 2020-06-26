@@ -225,7 +225,7 @@ fn emsr_rdonly(
     if read {
         let r = match msr {
             MSR_MTRRcap | MSR_IA32_BIOS_SIGN_ID => 0,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
         write_msr_to_reg(r, vcpu)
     } else {
@@ -438,4 +438,29 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
             unimplemented!()
         }
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_VMCALL
+////////////////////////////////////////////////////////////////////////////////
+pub fn default_vmcall_handler(vcpu: &VCPU, _gth: &GuestThread) -> Result<HandleResult, Error> {
+    let num = vcpu.read_reg(X86Reg::RDI)?;
+    let vmcall_args = vcpu.read_reg(X86Reg::RSI)?;
+    match num {
+        0 => return Ok(HandleResult::Exit),
+        1 => {
+            let string = unsafe {
+                let ptr = vmcall_args as *const &str;
+                ptr.read()
+            };
+            println!("{}", string);
+        }
+        _ => {}
+    };
+    Ok(HandleResult::Next)
+}
+
+pub fn handle_vmcall(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
+    let handler = { gth.vm.read().unwrap().vmcall_hander };
+    handler(vcpu, gth)
 }
