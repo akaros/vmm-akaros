@@ -1,7 +1,10 @@
-use super::{Error, GuestThread, HandleResult, X86Reg, VCPU};
+use crate::hv::vmx::get_guest_reg;
+#[allow(unused_imports)]
+use crate::{Error, GuestThread, HandleResult, X86Reg, VCPU};
+#[allow(unused_imports)]
 use log::{error, info, trace, warn};
 
-type MemAccessFn = fn() -> (); // fix me!
+type MemAccessFn = fn(&GuestThread, usize, &mut u64, u8, bool) -> Result<(), Error>;
 
 #[derive(Debug)]
 pub struct X86Decode {
@@ -36,7 +39,7 @@ impl Default for X86Decode {
     }
 }
 
-fn decode_prefix(insn: &Vec<u8>, decode: &mut X86Decode) {
+fn decode_prefix(insn: &[u8], decode: &mut X86Decode) {
     let mut prefix_sz = 0;
     for byte in insn.iter() {
         if *byte == 0x66 {
@@ -74,7 +77,7 @@ fn decode_prefix(insn: &Vec<u8>, decode: &mut X86Decode) {
     decode.prefix_sz = prefix_sz;
 }
 
-fn get_modrm(insn: &Vec<u8>, decode: &X86Decode) -> Result<u8, Error> {
+fn get_modrm(insn: &[u8], decode: &X86Decode) -> Result<u8, Error> {
     if decode.has_modrm {
         Ok(insn[(decode.prefix_sz + decode.opcode_sz) as usize])
     } else {
@@ -82,7 +85,7 @@ fn get_modrm(insn: &Vec<u8>, decode: &X86Decode) -> Result<u8, Error> {
     }
 }
 
-fn modrm_get_reg(insn: &Vec<u8>, decode: &X86Decode) -> Result<u8, Error> {
+fn modrm_get_reg(insn: &[u8], decode: &X86Decode) -> Result<u8, Error> {
     let modrm = get_modrm(insn, decode)?;
     let reg = (modrm >> 3) & 7;
     match decode.address_bytes {
@@ -151,7 +154,7 @@ fn modrm_sib_bytes_32(mod_: u8, rm: u8) -> u8 {
     ret
 }
 
-fn modrm_sib_bytes(insn: &Vec<u8>, decode: &X86Decode) -> Result<u8, Error> {
+fn modrm_sib_bytes(insn: &[u8], decode: &X86Decode) -> Result<u8, Error> {
     let modrm = get_modrm(insn, decode)?;
     let mod_ = modrm >> 6;
     let rm = modrm & 0x7;
@@ -165,7 +168,7 @@ fn modrm_sib_bytes(insn: &Vec<u8>, decode: &X86Decode) -> Result<u8, Error> {
     }
 }
 
-fn decode_opcode(insn: &Vec<u8>, decode: &mut X86Decode) -> Result<(), Error> {
+fn decode_opcode(insn: &[u8], decode: &mut X86Decode) -> Result<(), Error> {
     let opcodes = &insn[(decode.prefix_sz as usize)..];
     let unknown = Err(Error::Program("unknown opcode"));
     let reg = modrm_get_reg(insn, &decode);
@@ -206,15 +209,67 @@ fn decode_opcode(insn: &Vec<u8>, decode: &mut X86Decode) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn emulate_mem_insn(
+fn add_8081(
+    _vcpu: &VCPU,
+    _gth: &GuestThread,
+    _insn: &[u8],
+    _decode: &X86Decode,
+    _access: MemAccessFn,
+    _gpa: usize,
+) -> Result<(), Error> {
+    Err(Error::Program("add_8081 unimplemented"))
+}
+
+fn execute_op(
+    vcpu: &VCPU,
     gth: &GuestThread,
-    insn: &Vec<u8>,
+    insn: &[u8],
+    decode: &X86Decode,
     access: MemAccessFn,
-    advance: &i32,
-) -> Result<HandleResult, Error> {
+    gpa: usize,
+) -> Result<(), Error> {
+    let opcodes = &insn[decode.prefix_sz as usize..];
+    let unknown = Err(Error::Program("unknown opcode"));
+    let mod_reg = modrm_get_reg(insn, decode);
+    match opcodes[0] {
+        0x80 | 0x81 => match mod_reg? {
+            0 => add_8081(vcpu, gth, insn, &decode, access, gpa),
+            7 => unimplemented!(),
+            _ => unknown,
+        },
+        0x88 | 0x89 | 0x8a | 0x8b => {
+            let reg = get_guest_reg(mod_reg? as u64);
+            let mut reg_value = vcpu.read_reg(reg)?;
+            access(
+                gth,
+                gpa,
+                &mut reg_value,
+                decode.operand_bytes,
+                decode.is_store,
+            )?;
+            if !decode.is_store {
+                if decode.operand_bytes == 4 {
+                    reg_value &= 0xffffffff;
+                }
+                vcpu.write_reg(reg, reg_value)
+            } else {
+                Ok(())
+            }
+        }
+        _ => unknown,
+    }
+}
+
+pub fn emulate_mem_insn(
+    vcpu: &VCPU,
+    gth: &GuestThread,
+    insn: &[u8],
+    access: MemAccessFn,
+    gpa: usize,
+) -> Result<(), Error> {
     let mut decode = X86Decode::default();
     decode_prefix(insn, &mut decode);
     decode_opcode(insn, &mut decode)?;
-    println!("decoded: {:?}", &decode);
-    Err(Error::Program("unimplemented"))
+    execute_op(vcpu, gth, insn, &decode, access, gpa)?;
+    Ok(())
 }

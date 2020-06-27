@@ -567,7 +567,15 @@ fn ept_instr_fetch(qual: u64) -> bool {
     qual & 0b100 > 0
 }
 
-pub fn do_nothing() {}
+fn ioapic_access(
+    _gth: &GuestThread,
+    _gpa: usize,
+    _scratch: &mut u64,
+    _size: u8,
+    _store: bool,
+) -> Result<(), Error> {
+    Err("IO APIC emulation not implemented yet")?
+}
 
 pub fn handle_ept_violation(
     gpa: usize,
@@ -575,21 +583,16 @@ pub fn handle_ept_violation(
     gth: &GuestThread,
 ) -> Result<HandleResult, Error> {
     let qual = vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?;
+    trace!(
+        "ept, read = {}, write = {}, fetch = {}",
+        ept_read(qual),
+        ept_write(qual),
+        ept_instr_fetch(qual)
+    );
     if gpa >= IO_APIC_BASE && gpa < IO_APIC_BASE + PAGE_SIZE {
-        println!("instruction: {:02x?}", get_vmexit_instr(vcpu)?);
-        println!(
-            "ept, read = {}, write = {}, qual = {}",
-            ept_read(qual),
-            ept_write(qual),
-            ept_instr_fetch(qual)
-        );
         let insn = get_vmexit_instr(vcpu)?;
-        let advance = 1;
-        emulate_mem_insn(gth, &insn, do_nothing, &advance)?;
-        Err(Error::Unhandled(
-            VMX_REASON_EPT_VIOLATION,
-            "IO APIC emulation not implemented",
-        ))
+        emulate_mem_insn(vcpu, gth, &insn, ioapic_access, gpa)?;
+        Ok(HandleResult::Next)
     } else {
         Ok(HandleResult::Resume)
     }
