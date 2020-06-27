@@ -6,9 +6,9 @@ use super::paging::*;
 #[allow(unused_imports)]
 use super::x86::*;
 use super::{Error, GuestThread, HandleResult, X86Reg, VCPU};
+use crate::decode::emulate_mem_insn;
 use log::{error, info, trace, warn};
 use std::mem::size_of;
-
 // Fix me!
 // this function is extremely unsafe. The purpose is to read from guest's memory,
 // since the high memory address are the same as the host, we just directly read
@@ -74,7 +74,7 @@ pub fn simulate_paging(vcpu: &VCPU, addr_v: u64) -> Result<u64, Error> {
 }
 
 #[allow(dead_code)]
-pub fn get_vmexit_instr(vcpu: &VCPU, _gth: &GuestThread) -> Result<Vec<u8>, Error> {
+pub fn get_vmexit_instr(vcpu: &VCPU) -> Result<Vec<u8>, Error> {
     let len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
     let rip_v = vcpu.read_vmcs(VMCS_GUEST_RIP)?;
     let rip = simulate_paging(&vcpu, rip_v)?;
@@ -549,4 +549,48 @@ pub fn default_vmcall_handler(vcpu: &VCPU, _gth: &GuestThread) -> Result<HandleR
 pub fn handle_vmcall(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
     let handler = { gth.vm.read().unwrap().vmcall_hander };
     handler(vcpu, gth)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_EPT_VIOLATION
+////////////////////////////////////////////////////////////////////////////////
+
+fn ept_read(qual: u64) -> bool {
+    qual & 1 > 0
+}
+
+fn ept_write(qual: u64) -> bool {
+    qual & 0b10 > 0
+}
+
+fn ept_instr_fetch(qual: u64) -> bool {
+    qual & 0b100 > 0
+}
+
+pub fn do_nothing() {}
+
+pub fn handle_ept_violation(
+    gpa: usize,
+    vcpu: &VCPU,
+    gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    let qual = vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?;
+    if gpa >= IO_APIC_BASE && gpa < IO_APIC_BASE + PAGE_SIZE {
+        println!("instruction: {:02x?}", get_vmexit_instr(vcpu)?);
+        println!(
+            "ept, read = {}, write = {}, qual = {}",
+            ept_read(qual),
+            ept_write(qual),
+            ept_instr_fetch(qual)
+        );
+        let insn = get_vmexit_instr(vcpu)?;
+        let advance = 1;
+        emulate_mem_insn(gth, &insn, do_nothing, &advance)?;
+        Err(Error::Unhandled(
+            VMX_REASON_EPT_VIOLATION,
+            "IO APIC emulation not implemented",
+        ))
+    } else {
+        Ok(HandleResult::Resume)
+    }
 }

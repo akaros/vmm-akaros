@@ -2,6 +2,7 @@
 #[allow(non_upper_case_globals)]
 pub mod consts;
 mod cpuid;
+mod decode;
 pub mod err;
 #[allow(dead_code)]
 mod hv;
@@ -31,6 +32,7 @@ use std::marker::PhantomData;
 use std::sync::{Arc, RwLock};
 use vmexit::*;
 use x86::*;
+
 ////////////////////////////////////////////////////////////////////////////////
 // VMManager
 ////////////////////////////////////////////////////////////////////////////////
@@ -318,7 +320,7 @@ impl GuestThread {
                     let nmi = (info >> 12) & 1 == 1;
                     let e_type = (info >> 8) & 0b111;
                     let vector = info & 0xf;
-                    let instr = get_vmexit_instr(vcpu, self)?;
+                    let instr = get_vmexit_instr(vcpu)?;
                     println!("instr = {:02x?}", instr);
                     println!(
                         "valid = {}, nmi = {}, type = {}, vector = {}, code = {:b}",
@@ -349,7 +351,7 @@ impl GuestThread {
                         );
                         return Err(Error::Unhandled(reason, "too many EPT at the same place"));
                     } else {
-                        HandleResult::Resume
+                        handle_ept_violation(physical_addr as usize, vcpu, self)?
                     }
                 }
                 _ => {

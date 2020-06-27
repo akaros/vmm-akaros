@@ -455,7 +455,7 @@ impl VirtualMachine {
                 length: size_of::<AcpiMadtIoApic>() as u8,
             },
             id: 0,
-            address: 0xfec00000,
+            address: IO_APIC_BASE as u32,
             global_irq_base: 0,
             ..Default::default()
         };

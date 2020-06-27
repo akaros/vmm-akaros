@@ -89,3 +89,5 @@ pub const X86_EFER_LMA: u64 = 1 << 10;
 // pub const MSR_IA32_TSC_AUX: u32 = 0xc0000103;
 
 // pub const MSR_LAPIC_ICR: u32 = 0x00000830;
+
+pub const IO_APIC_BASE: usize = 0xfec00000;
