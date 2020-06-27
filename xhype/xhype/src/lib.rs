@@ -6,6 +6,7 @@ mod decode;
 pub mod err;
 #[allow(dead_code)]
 mod hv;
+mod ioapic;
 #[allow(dead_code)]
 pub mod linux;
 #[allow(non_camel_case_types)]
@@ -24,6 +25,7 @@ use hv::{
     cap2ctrl, vmx_read_capability, MemSpace, VMXCap, DEFAULT_MEM_SPACE, HV_MEMORY_EXEC,
     HV_MEMORY_READ, HV_MEMORY_WRITE, VCPU,
 };
+use ioapic::IoApic;
 use log::{error, info};
 use mach::{vm_self_region, MachVMBlock};
 use std::cell::Cell;
@@ -32,7 +34,6 @@ use std::marker::PhantomData;
 use std::sync::{Arc, RwLock};
 use vmexit::*;
 use x86::*;
-
 ////////////////////////////////////////////////////////////////////////////////
 // VMManager
 ////////////////////////////////////////////////////////////////////////////////
@@ -75,8 +76,10 @@ impl Drop for VMManager {
 pub struct VirtualMachine {
     mem_space: MemSpace,
     cores: u32,
+    // fixme: add lock to pci ports?
     pub(crate) cf8: u32,
     pub(crate) host_bridge_data: [u32; 16],
+    pub(crate) ioapic: Arc<RwLock<IoApic>>,
     /// the memory that is specifically allocated for the guest. For a vthread,
     /// it contains its stack and a paging structure. For a kernel, it contains
     /// its bios tables, APIC pages, high memory, etc.
@@ -99,6 +102,7 @@ impl VirtualMachine {
             cores,
             cf8: 0,
             host_bridge_data,
+            ioapic: Arc::new(RwLock::new(IoApic::new())),
             guest_mmap: HashMap::new(),
             vmcall_hander: default_vmcall_handler,
         };

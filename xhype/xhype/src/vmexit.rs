@@ -7,6 +7,7 @@ use super::paging::*;
 use super::x86::*;
 use super::{Error, GuestThread, HandleResult, X86Reg, VCPU};
 use crate::decode::emulate_mem_insn;
+use crate::ioapic::ioapic_access;
 use log::{error, info, trace, warn};
 use std::mem::size_of;
 // Fix me!
@@ -565,16 +566,6 @@ fn ept_write(qual: u64) -> bool {
 
 fn ept_instr_fetch(qual: u64) -> bool {
     qual & 0b100 > 0
-}
-
-fn ioapic_access(
-    _gth: &GuestThread,
-    _gpa: usize,
-    _scratch: &mut u64,
-    _size: u8,
-    _store: bool,
-) -> Result<(), Error> {
-    Err("IO APIC emulation not implemented yet")?
 }
 
 pub fn handle_ept_violation(

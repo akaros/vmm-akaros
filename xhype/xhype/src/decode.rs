@@ -270,6 +270,14 @@ pub fn emulate_mem_insn(
     let mut decode = X86Decode::default();
     decode_prefix(insn, &mut decode);
     decode_opcode(insn, &mut decode)?;
-    execute_op(vcpu, gth, insn, &decode, access, gpa)?;
-    Ok(())
+    match execute_op(vcpu, gth, insn, &decode, access, gpa) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            error!(
+                "emulate mem instruction {:02x?} fail, gpa = {:x}, decode = {:?}",
+                insn, gpa, decode
+            );
+            Err(e)
+        }
+    }
 }
