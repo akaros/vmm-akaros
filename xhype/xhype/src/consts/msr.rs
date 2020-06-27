@@ -56,7 +56,7 @@ pub const ATM_LNC_C6_AUTO_DEMOTE: u32 = (1 << 25);
 pub const SNB_C1_AUTO_UNDEMOTE: u32 = (1 << 27);
 pub const SNB_C3_AUTO_UNDEMOTE: u32 = (1 << 28);
 
-pub const MSR_MTRRcap: u32 = 0x000000fe;
+pub const MSR_MTRRCAP: u32 = 0x000000fe;
 pub const MSR_IA32_BBL_CR_CTL: u32 = 0x00000119;
 pub const MSR_IA32_BBL_CR_CTL3: u32 = 0x0000011e;
 
@@ -98,7 +98,7 @@ pub const MSR_MTRRfix4K_E0000: u32 = 0x0000026c;
 pub const MSR_MTRRfix4K_E8000: u32 = 0x0000026d;
 pub const MSR_MTRRfix4K_F0000: u32 = 0x0000026e;
 pub const MSR_MTRRfix4K_F8000: u32 = 0x0000026f;
-pub const MSR_MTRRdefType: u32 = 0x000002ff;
+pub const MSR_MTRRDEF_TYPE: u32 = 0x000002ff;
 
 pub const MSR_IA32_CR_PAT: u32 = 0x00000277;
 

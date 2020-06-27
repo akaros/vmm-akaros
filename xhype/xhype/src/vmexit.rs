@@ -81,6 +81,27 @@ pub fn get_vmexit_instr(vcpu: &VCPU, _gth: &GuestThread) -> Result<Vec<u8>, Erro
     Ok((0..len).map(|i| read_host_mem::<u8>(rip, i)).collect())
 }
 
+#[allow(dead_code)]
+pub fn get_vmexit_instr_more(
+    vcpu: &VCPU,
+    _gth: &GuestThread,
+    before: u64,
+    after: u64,
+) -> Result<[Vec<u8>; 3], Error> {
+    let len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
+    let rip_v = vcpu.read_vmcs(VMCS_GUEST_RIP)?;
+    let rip = simulate_paging(&vcpu, rip_v)?;
+    Ok([
+        (0..before)
+            .map(|i| read_host_mem::<u8>(rip - before, i))
+            .collect(),
+        (0..len).map(|i| read_host_mem::<u8>(rip, i)).collect(),
+        (0..after)
+            .map(|i| read_host_mem::<u8>(rip + len, i))
+            .collect(),
+    ])
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // VMX_REASON_MOV_CR
 ////////////////////////////////////////////////////////////////////////////////
@@ -160,13 +181,19 @@ fn write_msr_to_reg(msr_value: u64, vcpu: &VCPU) -> Result<HandleResult, Error> 
 }
 
 fn emsr_unimpl(
-    _msr: u32,
-    _read: bool,
-    _new_value: u64,
+    msr: u32,
+    read: bool,
+    new_value: u64,
     _vcpu: &VCPU,
     _gth: &GuestThread,
 ) -> Result<HandleResult, Error> {
-    unimplemented!()
+    if read {
+        error!("read from unknown msr: {:08x} ", msr);
+        Err(Error::Unhandled(VMX_REASON_RDMSR, "unknown msr"))
+    } else {
+        error!("write {:x} to unknown msr: {:08x} ", new_value, msr);
+        Err(Error::Unhandled(VMX_REASON_WRMSR, "unknown msr"))
+    }
 }
 /*
  * Set mandatory bits
@@ -224,7 +251,7 @@ fn emsr_rdonly(
 ) -> Result<HandleResult, Error> {
     if read {
         let r = match msr {
-            MSR_MTRRcap | MSR_IA32_BIOS_SIGN_ID => 0,
+            MSR_MTRRCAP | MSR_MTRRDEF_TYPE | MSR_IA32_BIOS_SIGN_ID => 0,
             _ => unreachable!(),
         };
         write_msr_to_reg(r, vcpu)
@@ -234,20 +261,71 @@ fn emsr_rdonly(
     }
 }
 
-const MSR_HANDLERS: [MSRHander; 5] = [
-    MSRHander(MSR_MTRRcap, emsr_rdonly),
+fn emsr_pat(
+    _msr: u32,
+    read: bool,
+    new_value: u64,
+    vcpu: &VCPU,
+    gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    // unimplemented!();
+    if read {
+        write_msr_to_reg(gth.msr_pat.get(), vcpu)
+    } else {
+        gth.msr_pat.set(new_value);
+        Ok(HandleResult::Next)
+    }
+}
+
+fn emsr_apicbase(
+    _msr: u32,
+    read: bool,
+    new_value: u64,
+    vcpu: &VCPU,
+    gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    let value = if gth.id == 0 {
+        0xfee00d00 // BSP
+    } else {
+        0xfee00c00 // non BSP
+    };
+    if read {
+        write_msr_to_reg(value, vcpu)
+    } else {
+        if new_value == value {
+            Ok(HandleResult::Next)
+        } else {
+            Err(Error::Unhandled(
+                VMX_REASON_WRMSR,
+                "apic base cannot be changed",
+            ))
+        }
+    }
+}
+
+macro_rules! arr {
+    ($id: ident $name: ident: [$ty: ty; _] = $value: expr) => {
+        $id $name: [$ty; $value.len()] = $value;
+    }
+}
+
+arr!(static MSR_HANDLERS: [MSRHander; _] = [
+    MSRHander(MSR_IA32_APICBASE, emsr_apicbase),
+    MSRHander(MSR_IA32_CR_PAT, emsr_pat),
+    MSRHander(MSR_MTRRDEF_TYPE, emsr_rdonly),
+    MSRHander(MSR_MTRRCAP, emsr_rdonly),
     MSRHander(MSR_IA32_BIOS_SIGN_ID, emsr_rdonly),
     MSRHander(MSR_IA32_MISC_ENABLE, emsr_miscenable),
     MSRHander(MSR_LAPIC_ICR, emsr_unimpl),
     MSRHander(MSR_EFER, emsr_efer),
-];
+]);
 
 pub fn handle_msr_access(
     read: bool,
     vcpu: &VCPU,
     gth: &GuestThread,
 ) -> Result<HandleResult, Error> {
-    let ecx = vcpu.read_reg(X86Reg::RCX)? as u32;
+    let ecx = (vcpu.read_reg(X86Reg::RCX)? & 0xffffffff) as u32;
     let new_value = if !read {
         let rdx = vcpu.read_reg(X86Reg::RDX)?;
         let rax = vcpu.read_reg(X86Reg::RAX)?;
@@ -263,11 +341,7 @@ pub fn handle_msr_access(
             return handler.1(ecx, read, new_value, vcpu, gth);
         }
     }
-    if read {
-        Err(Error::Unhandled(VMX_REASON_RDMSR, "read unknown msr"))
-    } else {
-        Err(Error::Unhandled(VMX_REASON_WRMSR, "write unknown msr"))
-    }
+    emsr_unimpl(ecx, read, new_value, vcpu, gth)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -427,16 +501,28 @@ fn cf8_handler(qual: u64, vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult
     Ok(HandleResult::Next)
 }
 
+pub fn unknown_port_handler(
+    qual: u64,
+    vcpu: &VCPU,
+    _gth: &GuestThread,
+) -> Result<HandleResult, Error> {
+    let rax = vcpu.read_reg(X86Reg::RAX)?;
+    let port = io_port(qual);
+    if io_in(qual) {
+        error!("write to io port = {:x}, rax={:x}", port, rax);
+    } else {
+        error!("write to io port = {:x}, rax={:x}", port, rax);
+    }
+    Err(Error::Unhandled(VMX_REASON_IO, "unknown port"))
+}
+
 pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
     let qual = vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?;
     let edx = (vcpu.read_reg(X86Reg::RDX)? & 0xffff) as u16;
     match edx {
         CONFIG_DATA | CONFIG_DATA2 => cfg_address_handler(qual, vcpu, gth),
         CONFIG_ADDRESS => cf8_handler(qual, vcpu, gth),
-        _ => {
-            error!("io port = {:x}", edx);
-            unimplemented!()
-        }
+        _ => unknown_port_handler(qual, vcpu, gth),
     }
 }
 

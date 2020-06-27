@@ -4,7 +4,6 @@ use super::mach::MachVMBlock;
 use super::paging::*;
 use super::x86::FL_RSVD_1;
 use super::{GuestThread, VirtualMachine, X86Reg, VCPU};
-use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -100,14 +99,8 @@ impl VThread {
             let mut vm = vm.write().unwrap();
             vm.map_guest_mem(mem_maps)?;
         }
-        let gth = GuestThread {
-            vm: Arc::clone(vm),
-            id: 0,
-            init_regs: init_regs,
-            init_vmcs: HashMap::new(),
-            vapic_addr: 0,
-            posted_irq_desc: 0,
-        };
+        let mut gth = GuestThread::new(vm, 0);
+        gth.init_regs = init_regs;
         Ok(VThread { gth })
     }
 }

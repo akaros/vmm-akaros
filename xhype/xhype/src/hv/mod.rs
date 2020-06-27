@@ -450,6 +450,7 @@ impl Drop for VCPU {
 }
 
 mod tests {
+    #[allow(unused_imports)]
     use super::vmx::*;
     #[allow(unused_imports)]
     use super::*;
@@ -457,7 +458,6 @@ mod tests {
     fn hv_vcpu_test() {
         vm_create(0).unwrap();
         println!("cpu2 cap={:x}", vmx_read_capability(VMXCap::CPU2).unwrap());
-        let cpu2_cap = vmx_read_capability(VMXCap::CPU2).unwrap();
         {
             let vcpu = VCPU::create().unwrap();
             vcpu.write_reg(X86Reg::RFLAGS, 0x2u64).unwrap();
@@ -497,5 +497,6 @@ mod tests {
             space2_id = space2.id;
         }
         assert_eq!(space1_id, space2_id);
+        vm_destroy().unwrap();
     }
 }

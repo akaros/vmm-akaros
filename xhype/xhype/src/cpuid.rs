@@ -1,5 +1,5 @@
 use super::{GuestThread, HandleResult, X86Reg, VCPU};
-use log::{info, warn};
+use log::{trace, warn};
 
 extern "C" {
     fn cpuid(ieax: u32, iecx: u32, eaxp: *mut u32, ebxp: *mut u32, ecxp: *mut u32, edxp: *mut u32);
@@ -72,9 +72,10 @@ pub fn handle_cpuid(vcpu: &VCPU, _gth: &GuestThread) -> HandleResult {
             /* Signal the use of KVM. */
             eax = 0;
             // "KVMKVMKVM\0\0\0"
-            ebx = 0x4b4d564b;
-            ecx = 0x564b4d56;
-            edx = 0x4d;
+            // FIX me: temporarily remove this signal
+            // ebx = 0x4b4d564b;
+            // ecx = 0x564b4d56;
+            // edx = 0x4d;
         }
         0x40000003 => {
             /* Hypervisor Features. */
@@ -102,9 +103,14 @@ pub fn handle_cpuid(vcpu: &VCPU, _gth: &GuestThread) -> HandleResult {
     vcpu.write_reg(X86Reg::RBX, ebx as u64).unwrap();
     vcpu.write_reg(X86Reg::RCX, ecx as u64).unwrap();
     vcpu.write_reg(X86Reg::RDX, edx as u64).unwrap();
-    info!(
+    trace!(
         "cpuid, eax_in={:x}, ecx_in={:x}, eax={:x}, ebx={:x}, ecx={:x}, edx={:x}",
-        eax_in, ecx_in, eax, ebx, ecx, edx
+        eax_in,
+        ecx_in,
+        eax,
+        ebx,
+        ecx,
+        edx
     );
     HandleResult::Next
 }

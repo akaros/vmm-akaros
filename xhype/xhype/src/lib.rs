@@ -23,13 +23,14 @@ use hv::{
     cap2ctrl, vmx_read_capability, MemSpace, VMXCap, DEFAULT_MEM_SPACE, HV_MEMORY_EXEC,
     HV_MEMORY_READ, HV_MEMORY_WRITE, VCPU,
 };
+use log::{error, info};
 use mach::{vm_self_region, MachVMBlock};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::{Arc, RwLock};
 use vmexit::*;
 use x86::*;
-
 ////////////////////////////////////////////////////////////////////////////////
 // VMManager
 ////////////////////////////////////////////////////////////////////////////////
@@ -106,6 +107,12 @@ impl VirtualMachine {
     fn map_guest_mem(&mut self, maps: HashMap<usize, MachVMBlock>) -> Result<(), Error> {
         self.guest_mmap = maps;
         for (gpa, mem_block) in self.guest_mmap.iter() {
+            info!(
+                "map gpa={:x} to hva={:x}, size={}page",
+                gpa,
+                mem_block.start,
+                mem_block.size / 4096
+            );
             self.mem_space.map(
                 mem_block.start,
                 *gpa,
@@ -147,6 +154,7 @@ pub struct GuestThread {
     pub init_regs: HashMap<X86Reg, u64>,
     vapic_addr: usize,
     posted_irq_desc: usize,
+    pub(crate) msr_pat: Cell<u64>,
 }
 
 impl VCPU {
@@ -258,6 +266,18 @@ pub enum HandleResult {
 }
 
 impl GuestThread {
+    pub fn new(vm: &Arc<RwLock<VirtualMachine>>, id: u32) -> Self {
+        GuestThread {
+            vm: Arc::clone(vm),
+            id: id,
+            init_vmcs: HashMap::new(),
+            init_regs: HashMap::new(),
+            vapic_addr: 0,
+            posted_irq_desc: 0,
+            msr_pat: Cell::new(0x7040600070406),
+        }
+    }
+
     pub fn start(self) -> std::thread::JoinHandle<Result<(), Error>> {
         std::thread::spawn(move || {
             let vcpu = VCPU::create()?;
@@ -298,8 +318,10 @@ impl GuestThread {
                     let nmi = (info >> 12) & 1 == 1;
                     let e_type = (info >> 8) & 0b111;
                     let vector = info & 0xf;
+                    let instr = get_vmexit_instr(vcpu, self)?;
+                    println!("instr = {:02x?}", instr);
                     println!(
-                        "valid = {}, nmi = {}, type = {}, vector = {}, code = {}",
+                        "valid = {}, nmi = {}, type = {}, vector = {}, code = {:b}",
                         valid, nmi, e_type, vector, code
                     );
                     return Err(Error::Unhandled(reason, "unhandled exception"));
@@ -321,6 +343,10 @@ impl GuestThread {
                         last_physical_addr = physical_addr;
                     }
                     if ept_count > 10 {
+                        error!(
+                            "EPT violation at {:x} for {} times",
+                            last_physical_addr, ept_count
+                        );
                         return Err(Error::Unhandled(reason, "too many EPT at the same place"));
                     } else {
                         HandleResult::Resume

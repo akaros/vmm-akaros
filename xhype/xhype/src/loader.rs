@@ -4,7 +4,8 @@ use super::paging::*;
 use super::x86::*;
 use super::Error;
 use super::{GuestThread, VirtualMachine, X86Reg};
-use log::warn;
+#[allow(unused_imports)]
+use log::{info, warn};
 use std::collections::HashMap;
 use std::fs::{metadata, File};
 use std::io::{Read, Seek, SeekFrom};
@@ -654,7 +655,7 @@ pub fn load_linux64(
     }
     let apic_page = MachVMBlock::new(PAGE_SIZE)?;
     mem_maps.insert(APIC_GPA, apic_page);
-    mem_maps.insert(vapic_block_start, vapic_block);
+    // mem_maps.insert(vapic_block_start, vapic_block);
     let num_gth;
     {
         let vm_ = &mut *vm.write().unwrap();
@@ -663,24 +664,23 @@ pub fn load_linux64(
     }
     let mut guest_threads = vec![];
     for i in 0..num_gth {
-        guest_threads.push(GuestThread {
-            id: i,
-            vm: Arc::clone(vm),
-            init_regs: HashMap::new(),
-            init_vmcs: HashMap::new(),
-            vapic_addr: vapic_block_start + i as usize * PAGE_SIZE,
-            posted_irq_desc: vapic_block_start + (i + num_gth) as usize * PAGE_SIZE,
-        });
+        let mut gth = GuestThread::new(vm, i);
+        gth.vapic_addr = vapic_block_start + i as usize * PAGE_SIZE;
+        gth.posted_irq_desc = vapic_block_start + (i + num_gth) as usize * PAGE_SIZE;
+        info!("guest thread {} with vapid_addr = {:x}", i, gth.vapic_addr);
+        guest_threads.push(gth);
     }
     guest_threads[0].init_regs = init_regs;
     Ok(guest_threads)
 }
 
 mod test {
+    #[allow(unused_imports)]
     use super::{
         AcpiMadtIoApic, AcpiMadtLocalApic, AcpiMadtLocalX2apic, AcpiTableFadt, AcpiTableHeader,
         AcpiTableMadt, AcpiTableRsdp,
     };
+    #[allow(unused_imports)]
     use std::mem::size_of;
     #[test]
     fn bois_table_struct_test() {
