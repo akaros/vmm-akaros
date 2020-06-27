@@ -7,7 +7,7 @@ pub mod err;
 #[allow(dead_code)]
 mod hv;
 #[allow(dead_code)]
-pub mod loader;
+pub mod linux;
 #[allow(non_camel_case_types)]
 mod mach;
 mod paging;

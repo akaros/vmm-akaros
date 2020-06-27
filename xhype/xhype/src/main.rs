@@ -3,7 +3,7 @@ use std::env;
 use std::sync::{Arc, RwLock};
 use xhype::err::Error;
 use xhype::vthread::Builder;
-use xhype::{loader, vmcall, VMManager};
+use xhype::{linux, vmcall, VMManager};
 
 static mut NUM_A: i32 = 4;
 static mut NUM_B: i32 = 2;
@@ -63,7 +63,7 @@ fn kernel_test() {
     let rd_path = env::var("RD_PATH").ok();
     let cmd_line = env::var("CMD_Line").unwrap_or("auto".to_string());
     let vm = Arc::new(RwLock::new(vmm.create_vm(1).unwrap()));
-    let guest_threads = loader::load_linux64(&vm, kn_path, rd_path, cmd_line, memsize).unwrap();
+    let guest_threads = linux::load_linux64(&vm, kn_path, rd_path, cmd_line, memsize).unwrap();
     let join_handlers: Vec<std::thread::JoinHandle<Result<(), Error>>> =
         guest_threads.into_iter().map(|gth| gth.start()).collect();
     for (i, handler) in join_handlers.into_iter().enumerate() {
