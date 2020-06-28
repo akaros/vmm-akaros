@@ -583,7 +583,9 @@ pub fn handle_ept_violation(
 ) -> Result<HandleResult, Error> {
     let qual = vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?;
     trace!(
-        "ept, read = {}, write = {}, fetch = {}",
+        "ept at gpa={:x}, vcpuid = {}, read = {}, write = {}, fetch = {}",
+        gpa,
+        vcpu.id(),
         ept_read(qual),
         ept_write(qual),
         ept_instr_fetch(qual)

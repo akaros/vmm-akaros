@@ -8,65 +8,9 @@ use crate::x86::*;
 use std::mem::size_of;
 use std::sync::{Arc, RwLock};
 use std::thread;
+
 pub struct VThread {
     pub gth: GuestThread,
-}
-
-const VTHREAD_STACK_SIZE: usize = 10 * PAGE_SIZE;
-const PAGING_SIZE: usize = 2 * PAGE_SIZE;
-
-pub struct Builder {
-    name: Option<String>,
-    stack_size: Option<usize>,
-    vm: Arc<RwLock<VirtualMachine>>,
-}
-
-impl Builder {
-    pub fn new(vm: &Arc<RwLock<VirtualMachine>>) -> Self {
-        Builder {
-            name: None,
-            stack_size: None,
-            vm: Arc::clone(vm),
-        }
-    }
-
-    pub fn name(mut self, name: String) -> Self {
-        self.name = Some(name);
-        self
-    }
-
-    pub fn stack_size(mut self, size: usize) -> Self {
-        self.stack_size = Some(size);
-        self
-    }
-
-    #[cfg(feature = "vthread_closure")]
-    pub fn spawn<F>(self, _f: F) -> Result<thread::JoinHandle<Result<(), Error>>, Error>
-    where
-        F: FnOnce() -> (),
-        F: Send + 'static,
-    {
-        let stack_size = round_up(self.stack_size.unwrap_or(VTHREAD_STACK_SIZE));
-        let vth = VThread::new(&self.vm, stack_size, F::call_once as usize)?;
-        Ok(thread::Builder::new()
-            .name(self.name.unwrap_or("<unnamed-vthread>".to_string()))
-            .spawn(move || {
-                let vcpu = VCPU::create()?;
-                vth.gth.run_on(&vcpu)
-            })?)
-    }
-
-    #[cfg(not(feature = "vthread_closure"))]
-    pub fn spawn(self, f: fn() -> ()) -> Result<thread::JoinHandle<Result<(), Error>>, Error> {
-        let stack_size = round_up(self.stack_size.unwrap_or(VTHREAD_STACK_SIZE));
-        let vth = VThread::new(&self.vm, stack_size, f as usize)?;
-        Ok(thread::Builder::new()
-            .name(self.name.unwrap_or("<unnamed-vthread>".to_string()))
-            .spawn(move || {
-                let vcpu = VCPU::create()?;
-                vth.gth.run_on(&vcpu)
-            })?)
-    }
 }
 
 impl VThread {
@@ -103,6 +47,78 @@ impl VThread {
         let mut gth = GuestThread::new(vm, 0);
         gth.init_regs = init_regs;
         Ok(VThread { gth })
+    }
+}
+
+const VTHREAD_STACK_SIZE: usize = 10 * PAGE_SIZE;
+const PAGING_SIZE: usize = 2 * PAGE_SIZE;
+
+pub struct Builder {
+    name: Option<String>,
+    stack_size: Option<usize>,
+    vm: Arc<RwLock<VirtualMachine>>,
+}
+
+impl Builder {
+    pub fn new(vm: &Arc<RwLock<VirtualMachine>>) -> Self {
+        Builder {
+            name: None,
+            stack_size: None,
+            vm: Arc::clone(vm),
+        }
+    }
+
+    pub fn name(mut self, name: String) -> Self {
+        self.name = Some(name);
+        self
+    }
+
+    pub fn stack_size(mut self, size: usize) -> Self {
+        self.stack_size = Some(size);
+        self
+    }
+
+    #[cfg(feature = "vthread_closure")]
+    pub fn spawn<F>(self, _f: F) -> Result<JoinHandle<()>, Error>
+    where
+        F: FnOnce() -> (),
+        F: Send + 'static,
+    {
+        let stack_size = round_up(self.stack_size.unwrap_or(VTHREAD_STACK_SIZE));
+        let vth = VThread::new(&self.vm, stack_size, F::call_once as usize)?;
+        let handle = thread::Builder::new()
+            .name(self.name.unwrap_or("<unnamed-vthread>".to_string()))
+            .spawn(move || {
+                let vcpu = VCPU::create()?;
+                vth.gth.run_on(&vcpu)
+            })?;
+        Ok(JoinHandle { handle })
+    }
+
+    #[cfg(not(feature = "vthread_closure"))]
+    pub fn spawn(self, f: fn() -> ()) -> Result<JoinHandle<()>, Error> {
+        let stack_size = round_up(self.stack_size.unwrap_or(VTHREAD_STACK_SIZE));
+        let vth = VThread::new(&self.vm, stack_size, f as usize)?;
+        let handle = thread::Builder::new()
+            .name(self.name.unwrap_or("<unnamed-vthread>".to_string()))
+            .spawn(move || {
+                let vcpu = VCPU::create()?;
+                vth.gth.run_on(&vcpu)
+            })?;
+        Ok(JoinHandle { handle })
+    }
+}
+
+pub struct JoinHandle<T> {
+    handle: thread::JoinHandle<Result<T, Error>>,
+}
+
+impl<T> JoinHandle<T> {
+    pub fn join(self) -> Result<T, Error> {
+        match self.handle.join() {
+            Err(e) => Err(Error::Thread(e)),
+            Ok(r) => r,
+        }
     }
 }
 

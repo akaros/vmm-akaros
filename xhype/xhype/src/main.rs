@@ -19,6 +19,7 @@ fn change_b() {
     unsafe {
         NUM_B = 100;
     }
+    // panic!();
 }
 
 const GOOD_STR: &str = "good";
@@ -52,8 +53,9 @@ fn vthread_test() {
             .spawn(change_b)
             .unwrap()
     };
-    vth_a.join().unwrap().unwrap();
-    vth_b.join().unwrap().unwrap();
+    vth_a.join().unwrap();
+    let b_result = vth_b.join();
+    println!("b_result = {:?}", b_result);
     println!("a = {}, b = {}", unsafe { NUM_A }, unsafe { NUM_B });
 }
 

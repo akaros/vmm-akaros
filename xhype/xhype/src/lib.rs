@@ -27,7 +27,8 @@ use hv::vmx::*;
 use hv::X86Reg;
 use hv::{MemSpace, DEFAULT_MEM_SPACE, HV_MEMORY_EXEC, HV_MEMORY_READ, HV_MEMORY_WRITE, VCPU};
 use ioapic::IoApic;
-use log::{error, info};
+#[allow(unused_imports)]
+use log::*;
 use mach::{vm_self_region, MachVMBlock};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -189,13 +190,13 @@ impl GuestThread {
     }
     pub(crate) fn run_on(&self, vcpu: &VCPU) -> Result<(), Error> {
         {
-            vcpu.set_space(&(self.vm.read().unwrap()).mem_space)?;
+            let mem_space = &(self.vm.read().unwrap()).mem_space;
+            vcpu.set_space(mem_space)?;
+            trace!("set vcpu {} space to {}", vcpu.id(), mem_space.id);
         }
         let result = self.run_on_inner(vcpu);
-        if result.is_err() {
-            println!("last instruction: {:02x?}", get_vmexit_instr(vcpu)?);
-        }
         vcpu.set_space(&DEFAULT_MEM_SPACE)?;
+        trace!("set vcpu back {} space to 0", vcpu.id());
         result
     }
     fn run_on_inner(&self, vcpu: &VCPU) -> Result<(), Error> {
@@ -216,6 +217,7 @@ impl GuestThread {
         loop {
             vcpu.run()?;
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
+            trace!("vm exit reason = {}", reason);
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
             result = match reason {
                 VMX_REASON_EXC_NMI => {
@@ -225,10 +227,8 @@ impl GuestThread {
                     let nmi = (info >> 12) & 1 == 1;
                     let e_type = (info >> 8) & 0b111;
                     let vector = info & 0xf;
-                    let instr = get_vmexit_instr(vcpu)?;
-                    println!("instr = {:02x?}", instr);
-                    println!(
-                        "valid = {}, nmi = {}, type = {}, vector = {}, code = {:b}",
+                    info!(
+                        "VMX_REASON_EXC_NMI, valid = {}, nmi = {}, type = {}, vector = {}, code = {:b}",
                         valid, nmi, e_type, vector, code
                     );
                     return Err(Error::Unhandled(reason, "unhandled exception"));
@@ -254,13 +254,17 @@ impl GuestThread {
                             "EPT violation at {:x} for {} times",
                             last_physical_addr, ept_count
                         );
-                        return Err(Error::Unhandled(reason, "too many EPT at the same place"));
+                        return Err(Error::Unhandled(
+                            reason,
+                            "too many EPT faults at the same address",
+                        ));
                     } else {
                         handle_ept_violation(physical_addr as usize, vcpu, self)?
                     }
                 }
                 VMX_REASON_XSETBV => handle_xsetbv(&vcpu, self)?,
                 _ => {
+                    trace!("Unhandled reason = {}", reason);
                     if reason < VMX_REASON_MAX {
                         return Err(Error::Unhandled(reason, "unable to handle"));
                     } else {

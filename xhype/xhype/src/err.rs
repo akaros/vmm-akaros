@@ -2,10 +2,11 @@ use std::io;
 
 #[derive(Debug)]
 pub enum Error {
-    IO(io::Error),                // IO errors
-    Mach(u32, &'static str),      // Error code returned by Mach Kernel, (error, func())
+    IO(io::Error),                                   // IO errors
+    Mach(u32, &'static str), // Error code returned by Mach Kernel, (error, func())
     Unhandled(u64, &'static str), // (vm exit reason, description of error)
-    Program(&'static str),        // any other error message
+    Thread(Box<dyn std::any::Any + Send + 'static>), // Wrap the Error of std::thread::Thread
+    Program(&'static str),   // any other error message
 }
 
 impl From<io::Error> for Error {

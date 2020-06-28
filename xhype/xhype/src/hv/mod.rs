@@ -89,7 +89,7 @@ pub fn vm_destroy() -> Result<(), Error> {
 
 #[derive(Debug)]
 pub struct MemSpace {
-    id: u32,
+    pub(crate) id: u32,
 }
 
 pub static DEFAULT_MEM_SPACE: MemSpace = MemSpace { id: 0 };
@@ -550,6 +550,11 @@ impl VCPU {
 
 impl Drop for VCPU {
     fn drop(&mut self) {
+        // If a guest thread panics, GuestThread::run_on() will not be able to
+        // set the vcpu's memory space back to the default one. Therefore before
+        // a vcpu is destroyed, we need to double check to make sure its memory
+        // space is set back to the original one.
+        self.set_space(&DEFAULT_MEM_SPACE).unwrap();
         check_ret(unsafe { hv_vcpu_destroy(self.id) }, "hv_vcpu_destroy").unwrap();
     }
 }
