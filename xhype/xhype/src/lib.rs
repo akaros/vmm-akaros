@@ -18,6 +18,7 @@ pub mod vthread;
 mod x86;
 #[allow(unused_imports)]
 use consts::msr::*;
+use cpuid::do_cpuid;
 use err::Error;
 use hv::vmx::*;
 use hv::X86Reg;
@@ -41,19 +42,23 @@ use x86::*;
 // only one vmm is allowed to be created per process
 pub struct VMManager {
     marker: PhantomData<()>, // add a PhantomData here to prevent user from constructing VMM by VMManager{}
+    x86_host_xcr0: u64,
 }
 
 impl VMManager {
     pub fn new() -> Result<Self, Error> {
         hv::vm_create(0)?;
+        let (eax, _, _, edx) = do_cpuid(0xd, 0x0);
+        let proc_supported_features = (edx as u64) << 32 | (eax as u64);
         Ok(VMManager {
             marker: PhantomData,
+            x86_host_xcr0: proc_supported_features & X86_MAX_XCR0,
         })
     }
 
     pub fn create_vm(&self, cores: u32) -> Result<VirtualMachine, Error> {
         assert_eq!(cores, 1); //FIXME: currently only one core is supported
-        VirtualMachine::new(cores)
+        VirtualMachine::new(cores, &self)
     }
     pub fn create_vcpu(&self) -> Result<VCPU, Error> {
         VCPU::create()
@@ -86,12 +91,13 @@ pub struct VirtualMachine {
     /// guest virtual address -> host VM block
     pub(crate) guest_mmap: HashMap<usize, MachVMBlock>,
     pub vmcall_hander: fn(&VCPU, &GuestThread) -> Result<HandleResult, Error>,
+    x86_host_xcr0: u64,
 }
 
 impl VirtualMachine {
     // make it private to force user to create a vm by calling create_vm to make
     // sure that hv_vm_create() is called before hv_vm_space_create() is called
-    fn new(cores: u32) -> Result<Self, Error> {
+    fn new(cores: u32, vmm: &VMManager) -> Result<Self, Error> {
         let mut host_bridge_data = [0; 16];
         let data = [0x71908086, 0x02000006, 0x06000001]; //0:00.0 Host bridge: Intel Corporation 440BX/ZX/DX - 82443BX/ZX/DX Host bridge (rev 01)
         for (i, n) in data.iter().enumerate() {
@@ -105,6 +111,7 @@ impl VirtualMachine {
             ioapic: Arc::new(RwLock::new(IoApic::new())),
             guest_mmap: HashMap::new(),
             vmcall_hander: default_vmcall_handler,
+            x86_host_xcr0: vmm.x86_host_xcr0,
         };
         vm.gpa2hva_map()?;
         Ok(vm)
@@ -295,6 +302,9 @@ impl GuestThread {
             vcpu.set_space(&(self.vm.read().unwrap()).mem_space)?;
         }
         let result = self.run_on_inner(vcpu);
+        if result.is_err() {
+            println!("final instruction: {:02x?}", get_vmexit_instr(vcpu)?);
+        }
         vcpu.set_space(&DEFAULT_MEM_SPACE)?;
         result
     }
@@ -358,6 +368,7 @@ impl GuestThread {
                         handle_ept_violation(physical_addr as usize, vcpu, self)?
                     }
                 }
+                VMX_REASON_XSETBV => handle_xsetbv(&vcpu, self)?,
                 _ => {
                     if reason < VMX_REASON_MAX {
                         return Err(Error::Unhandled(reason, "unable to handle"));

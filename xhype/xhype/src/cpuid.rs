@@ -5,7 +5,7 @@ extern "C" {
     fn cpuid(ieax: u32, iecx: u32, eaxp: *mut u32, ebxp: *mut u32, ecxp: *mut u32, edxp: *mut u32);
 }
 
-fn do_cpuid(eax: u32, ebx: u32) -> (u32, u32, u32, u32) {
+pub fn do_cpuid(eax: u32, ecx: u32) -> (u32, u32, u32, u32) {
     let mut o_eax = 0;
     let mut o_ebx = 0;
     let mut o_ecx = 0;
@@ -13,7 +13,7 @@ fn do_cpuid(eax: u32, ebx: u32) -> (u32, u32, u32, u32) {
     unsafe {
         cpuid(
             eax,
-            ebx,
+            ecx,
             &mut o_eax as *mut u32,
             &mut o_ebx as *mut u32,
             &mut o_ecx as *mut u32,

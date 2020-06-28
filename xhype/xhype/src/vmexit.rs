@@ -588,3 +588,33 @@ pub fn handle_ept_violation(
         Ok(HandleResult::Resume)
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_XSETBV
+////////////////////////////////////////////////////////////////////////////////
+
+pub fn handle_xsetbv(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
+    if vcpu.read_reg(X86Reg::RCX)? != 0 {
+        Err(Error::Unhandled(
+            VMX_REASON_XSETBV,
+            "only xcr0 is supported",
+        ))
+    } else {
+        let host_xcr0 = { gth.vm.read().unwrap().x86_host_xcr0 };
+        let xcr_val =
+            (vcpu.read_reg(X86Reg::RDX)? << 32) | (vcpu.read_reg(X86Reg::RAX)? & 0xffffffff);
+        if xcr_val & !host_xcr0 != 0 {
+            Err(Error::Unhandled(
+                VMX_REASON_XSETBV,
+                "vm set xcr0 t a superset of default value",
+            ))
+        } else {
+            vcpu.write_reg(X86Reg::XCR0, xcr_val)?;
+            info!(
+                "default xcr0 = {:x}, write {:x} to guest xcr0",
+                host_xcr0, xcr_val
+            );
+            Ok(HandleResult::Next)
+        }
+    }
+}
