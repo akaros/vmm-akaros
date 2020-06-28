@@ -1,9 +1,10 @@
 use super::err::Error;
 use super::hlt;
 use super::mach::MachVMBlock;
-use super::paging::*;
 use super::x86::FL_RSVD_1;
 use super::{GuestThread, VirtualMachine, X86Reg, VCPU};
+use crate::utils::round_up;
+use crate::x86::*;
 use std::mem::size_of;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -40,30 +41,30 @@ impl Builder {
     }
 
     #[cfg(feature = "vthread_closure")]
-    pub fn spawn<F>(self, _f: F) -> Result<thread::JoinHandle<()>, Error>
+    pub fn spawn<F>(self, _f: F) -> Result<thread::JoinHandle<Result<(), Error>>, Error>
     where
         F: FnOnce() -> (),
         F: Send + 'static,
     {
-        let stack_size = (self.stack_size.unwrap_or(VTHREAD_STACK_SIZE) >> 3) << 3;
+        let stack_size = round_up(self.stack_size.unwrap_or(VTHREAD_STACK_SIZE));
         let vth = VThread::new(&self.vm, stack_size, F::call_once as usize)?;
         Ok(thread::Builder::new()
             .name(self.name.unwrap_or("<unnamed-vthread>".to_string()))
             .spawn(move || {
-                let vcpu = VCPU::create().unwrap();
-                vth.gth.run_on(&vcpu).unwrap();
+                let vcpu = VCPU::create()?;
+                vth.gth.run_on(&vcpu)
             })?)
     }
 
     #[cfg(not(feature = "vthread_closure"))]
-    pub fn spawn(self, f: fn() -> ()) -> Result<thread::JoinHandle<()>, Error> {
-        let stack_size = (self.stack_size.unwrap_or(VTHREAD_STACK_SIZE) >> 3) << 3;
+    pub fn spawn(self, f: fn() -> ()) -> Result<thread::JoinHandle<Result<(), Error>>, Error> {
+        let stack_size = round_up(self.stack_size.unwrap_or(VTHREAD_STACK_SIZE));
         let vth = VThread::new(&self.vm, stack_size, f as usize)?;
         Ok(thread::Builder::new()
             .name(self.name.unwrap_or("<unnamed-vthread>".to_string()))
             .spawn(move || {
-                let vcpu = VCPU::create().unwrap();
-                vth.gth.run_on(&vcpu).unwrap();
+                let vcpu = VCPU::create()?;
+                vth.gth.run_on(&vcpu)
             })?)
     }
 }

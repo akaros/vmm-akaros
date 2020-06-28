@@ -22,6 +22,7 @@ fn change_b() {
 }
 
 const GOOD_STR: &str = "good";
+const CLOSURE_STR: &str = "vmcall inside a clousre";
 
 fn vthread_test() {
     println!("initially, a = {}, b = {}", unsafe { NUM_A }, unsafe {
@@ -33,7 +34,7 @@ fn vthread_test() {
         Builder::new(&vm)
             .spawn(|| unsafe {
                 NUM_A = 3;
-                vmcall(1, &GOOD_STR as *const &str as *const u8);
+                vmcall(1, &CLOSURE_STR as *const &str as *const u8);
             })
             .unwrap()
     } else {
@@ -51,8 +52,8 @@ fn vthread_test() {
             .spawn(change_b)
             .unwrap()
     };
-    vth_a.join().unwrap();
-    vth_b.join().unwrap();
+    vth_a.join().unwrap().unwrap();
+    vth_b.join().unwrap().unwrap();
     println!("a = {}, b = {}", unsafe { NUM_A }, unsafe { NUM_B });
 }
 

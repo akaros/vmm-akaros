@@ -2,14 +2,22 @@
 use super::consts::msr::*;
 #[allow(unused_imports)]
 use super::hv::vmx::*;
-use super::paging::*;
 #[allow(unused_imports)]
 use super::x86::*;
-use super::{Error, GuestThread, HandleResult, X86Reg, VCPU};
+use super::{Error, GuestThread, X86Reg, VCPU};
+use crate::cpuid::do_cpuid;
 use crate::decode::emulate_mem_insn;
 use crate::ioapic::ioapic_access;
 use log::{error, info, trace, warn};
 use std::mem::size_of;
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum HandleResult {
+    Exit,
+    Resume,
+    Next,
+}
+
 // Fix me!
 // this function is extremely unsafe. The purpose is to read from guest's memory,
 // since the high memory address are the same as the host, we just directly read
@@ -617,4 +625,100 @@ pub fn handle_xsetbv(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Err
             Ok(HandleResult::Next)
         }
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_CPUID
+////////////////////////////////////////////////////////////////////////////////
+
+pub fn handle_cpuid(vcpu: &VCPU, _gth: &GuestThread) -> HandleResult {
+    let eax_in = vcpu.read_reg(X86Reg::RAX).unwrap() as u32;
+    let ecx_in = vcpu.read_reg(X86Reg::RCX).unwrap() as u32;
+    // FIX ME: can be optimized here
+    let (mut eax, mut ebx, mut ecx, mut edx) = do_cpuid(eax_in, ecx_in);
+    match eax_in {
+        0x01 => {
+            /* Set the hypervisor bit to let the guest know it is
+             * virtualized */
+            ecx |= 1 << 31;
+            /* Unset the monitor capability bit so that the guest does not
+             * try to use monitor/mwait. */
+            ecx &= !(1 << 3);
+            /* Unset the vmx capability bit so that the guest does not try
+             * to turn it on. */
+            ecx &= !(1 << 5);
+            /* Unset the perf capability bit so that the guest does not try
+             * to turn it on. */
+            ecx &= !(1 << 15);
+            /* Set the guest pcore id into the apic ID field in CPUID. */
+            ebx &= 0x0000ffff;
+            // FIX me, not finished
+            // ebx |= (current->vmm.nr_guest_pcores & 0xff) << 16;
+            // ebx |= (tf->tf_guest_pcoreid & 0xff) << 24;
+            ebx |= (1 & 0xff) << 16;
+            // FIX me: vcpu.id might not be appropriate. vcpu of macOS is more
+            // like an executor of virtual tasks. For a virtual kernel we should
+            // use the id of its virtual threads.
+            ebx |= (vcpu.id() & 0xff) << 24;
+            warn!(
+                "set number of logical processors = 1, apic id = {}",
+                vcpu.id()
+            );
+            // unimplemented!();
+        }
+        0x07 => {
+            /* Do not advertise TSC_ADJUST */
+            ebx &= !(1 << 1);
+        }
+        0x0a => {
+            eax = 0;
+            ebx = 0;
+            ecx = 0;
+            edx = 0;
+        }
+        0x40000000 => {
+            /* Signal the use of KVM. */
+            eax = 0;
+            // "KVMKVMKVM\0\0\0"
+            // FIX me: temporarily remove this signal
+            // ebx = 0x4b4d564b;
+            // ecx = 0x564b4d56;
+            // edx = 0x4d;
+        }
+        0x40000003 => {
+            /* Hypervisor Features. */
+            /* Unset the monitor capability bit so that the guest does not
+             * try to use monitor/mwait. */
+            edx &= !(1 << 0);
+        }
+        0x40000100 => {
+            /* Signal the use of AKAROS. */
+            eax = 0;
+            // "AKAROSINSIDE"
+            ebx = 0x52414b41;
+            ecx = 0x4e49534f;
+            edx = 0x45444953;
+        }
+        /* Hypervisor Features. */
+        0x40000103 => {
+            /* Unset the monitor capability bit so that the guest does not
+             * try to use monitor/mwait. */
+            edx &= !(1 << 0);
+        }
+        _ => {}
+    }
+    vcpu.write_reg(X86Reg::RAX, eax as u64).unwrap();
+    vcpu.write_reg(X86Reg::RBX, ebx as u64).unwrap();
+    vcpu.write_reg(X86Reg::RCX, ecx as u64).unwrap();
+    vcpu.write_reg(X86Reg::RDX, edx as u64).unwrap();
+    trace!(
+        "cpuid, eax_in={:x}, ecx_in={:x}, eax={:x}, ebx={:x}, ecx={:x}, edx={:x}",
+        eax_in,
+        ecx_in,
+        eax,
+        ebx,
+        ecx,
+        edx
+    );
+    HandleResult::Next
 }

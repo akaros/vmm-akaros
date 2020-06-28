@@ -1,4 +1,6 @@
 #![cfg_attr(feature = "vthread_closure", feature(fn_traits))]
+#[allow(dead_code)]
+mod bios;
 #[allow(non_upper_case_globals)]
 pub mod consts;
 mod cpuid;
@@ -10,8 +12,9 @@ mod ioapic;
 #[allow(dead_code)]
 pub mod linux;
 #[allow(non_camel_case_types)]
+#[allow(dead_code)]
 mod mach;
-mod paging;
+pub mod utils;
 mod vmexit;
 pub mod vthread;
 #[allow(dead_code)]
@@ -22,10 +25,7 @@ use cpuid::do_cpuid;
 use err::Error;
 use hv::vmx::*;
 use hv::X86Reg;
-use hv::{
-    cap2ctrl, vmx_read_capability, MemSpace, VMXCap, DEFAULT_MEM_SPACE, HV_MEMORY_EXEC,
-    HV_MEMORY_READ, HV_MEMORY_WRITE, VCPU,
-};
+use hv::{MemSpace, DEFAULT_MEM_SPACE, HV_MEMORY_EXEC, HV_MEMORY_READ, HV_MEMORY_WRITE, VCPU};
 use ioapic::IoApic;
 use log::{error, info};
 use mach::{vm_self_region, MachVMBlock};
@@ -35,6 +35,7 @@ use std::marker::PhantomData;
 use std::sync::{Arc, RwLock};
 use vmexit::*;
 use x86::*;
+
 ////////////////////////////////////////////////////////////////////////////////
 // VMManager
 ////////////////////////////////////////////////////////////////////////////////
@@ -59,9 +60,6 @@ impl VMManager {
     pub fn create_vm(&self, cores: u32) -> Result<VirtualMachine, Error> {
         assert_eq!(cores, 1); //FIXME: currently only one core is supported
         VirtualMachine::new(cores, &self)
-    }
-    pub fn create_vcpu(&self) -> Result<VCPU, Error> {
-        VCPU::create()
     }
 }
 
@@ -170,114 +168,6 @@ pub struct GuestThread {
     pub(crate) msr_pat: Cell<u64>,
 }
 
-impl VCPU {
-    fn longmode(&self) -> Result<(), Error> {
-        self.enable_native_msr(MSR_LSTAR, true)?;
-        self.enable_native_msr(MSR_CSTAR, true)?;
-        self.enable_native_msr(MSR_STAR, true)?;
-        self.enable_native_msr(MSR_SYSCALL_MASK, true)?;
-        self.enable_native_msr(MSR_KERNEL_GS_BASE, true)?;
-        self.enable_native_msr(MSR_GS_BASE, true)?;
-        self.enable_native_msr(MSR_FS_BASE, true)?;
-        self.enable_native_msr(MSR_IA32_SYSENTER_CS, true)?;
-        self.enable_native_msr(MSR_IA32_SYSENTER_ESP, true)?;
-        self.enable_native_msr(MSR_IA32_SYSENTER_EIP, true)?;
-        self.enable_native_msr(MSR_IA32_TSC, true)?;
-        self.enable_native_msr(MSR_TSC_AUX, true)?;
-
-        self.write_vmcs(VMCS_GUEST_CS, 0x10)?;
-        self.write_vmcs(VMCS_GUEST_CS_AR, 0xa09b)?;
-        self.write_vmcs(VMCS_GUEST_CS_LIMIT, 0xffffffff)?;
-        self.write_vmcs(VMCS_GUEST_CS_BASE, 0)?;
-
-        self.write_vmcs(VMCS_GUEST_DS, 0x18)?;
-        self.write_vmcs(VMCS_GUEST_DS_AR, 0xc093)?;
-        self.write_vmcs(VMCS_GUEST_DS_LIMIT, 0xffffffff)?;
-        self.write_vmcs(VMCS_GUEST_DS_BASE, 0)?;
-
-        self.write_vmcs(VMCS_GUEST_ES, 0x18)?;
-        self.write_vmcs(VMCS_GUEST_ES_AR, 0xc093)?;
-        self.write_vmcs(VMCS_GUEST_ES_LIMIT, 0xffffffff)?;
-        self.write_vmcs(VMCS_GUEST_ES_BASE, 0)?;
-
-        self.write_vmcs(VMCS_GUEST_FS, 0)?;
-        self.write_vmcs(VMCS_GUEST_FS_AR, 0x93)?;
-        self.write_vmcs(VMCS_GUEST_FS_LIMIT, 0xffff)?;
-        self.write_vmcs(VMCS_GUEST_FS_BASE, 0)?;
-
-        self.write_vmcs(VMCS_GUEST_GS, 0)?;
-        self.write_vmcs(VMCS_GUEST_GS_AR, 0x93)?;
-        self.write_vmcs(VMCS_GUEST_GS_LIMIT, 0xffff)?;
-        self.write_vmcs(VMCS_GUEST_GS_BASE, 0)?;
-
-        self.write_vmcs(VMCS_GUEST_SS, 0x18)?;
-        self.write_vmcs(VMCS_GUEST_SS_AR, 0xc093)?;
-        self.write_vmcs(VMCS_GUEST_SS_LIMIT, 0xffffffff)?;
-        self.write_vmcs(VMCS_GUEST_SS_BASE, 0)?;
-
-        self.write_vmcs(VMCS_GUEST_LDTR, 0)?;
-        self.write_vmcs(VMCS_GUEST_LDTR_AR, 0x82)?;
-        self.write_vmcs(VMCS_GUEST_LDTR_LIMIT, 0xffff)?;
-        self.write_vmcs(VMCS_GUEST_LDTR_BASE, 0)?;
-
-        self.write_vmcs(VMCS_GUEST_GDTR_BASE, 0x17)?;
-        self.write_vmcs(VMCS_GUEST_GDTR_LIMIT, 0xfe0)?;
-
-        self.write_vmcs(VMCS_GUEST_TR, 0)?;
-        self.write_vmcs(VMCS_GUEST_TR_AR, 0x8b)?;
-        self.write_vmcs(VMCS_GUEST_TR_LIMIT, 0)?;
-        self.write_vmcs(VMCS_GUEST_TR_BASE, 0)?;
-
-        self.write_vmcs(VMCS_GUEST_IDTR_LIMIT, 0)?;
-        self.write_vmcs(VMCS_GUEST_IDTR_BASE, 0)?;
-
-        let cap_pin = vmx_read_capability(VMXCap::PIN)?;
-        let cap_cpu = vmx_read_capability(VMXCap::CPU)?;
-        let cap_cpu2 = vmx_read_capability(VMXCap::CPU2)?;
-        let cap_entry = vmx_read_capability(VMXCap::ENTRY)?;
-
-        self.write_vmcs(VMCS_CTRL_PIN_BASED, cap2ctrl(cap_pin, 0))?;
-        self.write_vmcs(
-            VMCS_CTRL_CPU_BASED,
-            cap2ctrl(
-                cap_cpu,
-                CPU_BASED_HLT | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE,
-            ),
-        )?;
-        // Hypervisor.framework does not support X2APIC virtualization
-        self.write_vmcs(
-            VMCS_CTRL_CPU_BASED2,
-            cap2ctrl(cap_cpu2, CPU_BASED2_RDTSCP | CPU_BASED2_VIRTUAL_APIC),
-        )?;
-        self.write_vmcs(
-            VMCS_CTRL_VMENTRY_CONTROLS,
-            cap2ctrl(cap_entry, VMENTRY_GUEST_IA32E),
-        )?;
-
-        self.write_vmcs(VMCS_CTRL_EXC_BITMAP, 0xffffffff & !(1 << 14))?;
-
-        let cr0 = X86_CR0_NE | X86_CR0_ET | X86_CR0_PE | X86_CR0_PG;
-        self.write_vmcs(VMCS_GUEST_CR0, cr0)?;
-        self.write_vmcs(VMCS_CTRL_CR0_MASK, X86_CR0_PE | X86_CR0_PG)?;
-        self.write_vmcs(VMCS_CTRL_CR0_SHADOW, X86_CR0_PE | X86_CR0_PG)?;
-
-        let cr4 = X86_CR4_VMXE | X86_CR4_OSFXSR | X86_CR4_OSXSAVE | X86_CR4_PAE;
-        self.write_vmcs(VMCS_GUEST_CR4, cr4)?;
-        self.write_vmcs(VMCS_CTRL_CR4_MASK, X86_CR4_VMXE)?;
-        self.write_vmcs(VMCS_CTRL_CR4_SHADOW, 0)?;
-
-        let efer = X86_EFER_LMA | X86_EFER_LME;
-        self.write_vmcs(VMCS_GUEST_IA32_EFER, efer)
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum HandleResult {
-    Exit,
-    Resume,
-    Next,
-}
-
 impl GuestThread {
     pub fn new(vm: &Arc<RwLock<VirtualMachine>>, id: u32) -> Self {
         GuestThread {
@@ -303,14 +193,15 @@ impl GuestThread {
         }
         let result = self.run_on_inner(vcpu);
         if result.is_err() {
-            println!("final instruction: {:02x?}", get_vmexit_instr(vcpu)?);
+            println!("last instruction: {:02x?}", get_vmexit_instr(vcpu)?);
         }
         vcpu.set_space(&DEFAULT_MEM_SPACE)?;
         result
     }
     fn run_on_inner(&self, vcpu: &VCPU) -> Result<(), Error> {
         vcpu.set_vapic_address(self.vapic_addr)?;
-        vcpu.longmode()?;
+        vcpu.enable_msrs()?;
+        vcpu.long_mode()?;
         for (field, value) in self.init_vmcs.iter() {
             vcpu.write_vmcs(*field, *value)?;
         }
@@ -343,7 +234,7 @@ impl GuestThread {
                     return Err(Error::Unhandled(reason, "unhandled exception"));
                 }
                 VMX_REASON_IRQ => HandleResult::Resume,
-                VMX_REASON_CPUID => cpuid::handle_cpuid(&vcpu, self),
+                VMX_REASON_CPUID => handle_cpuid(&vcpu, self),
                 VMX_REASON_HLT => HandleResult::Exit,
                 VMX_REASON_VMCALL => handle_vmcall(&vcpu, self)?,
                 VMX_REASON_MOV_CR => handle_cr(&vcpu, self)?,

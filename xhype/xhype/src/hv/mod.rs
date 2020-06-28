@@ -4,6 +4,10 @@ use super::Error;
 #[allow(dead_code)]
 mod ffi;
 pub mod vmx;
+#[allow(unused_imports)]
+use crate::consts::msr::*;
+#[allow(unused_imports)]
+use crate::x86::*;
 use ffi::*;
 use std::hash::Hash;
 use vmx::*;
@@ -440,6 +444,107 @@ impl VCPU {
             unsafe { hv_vmx_vcpu_set_apic_address(self.id, address) },
             "hv_vmx_vcpu_set_apic_address",
         )
+    }
+
+    pub fn enable_msrs(&self) -> Result<(), Error> {
+        self.enable_native_msr(MSR_LSTAR, true)?;
+        self.enable_native_msr(MSR_CSTAR, true)?;
+        self.enable_native_msr(MSR_STAR, true)?;
+        self.enable_native_msr(MSR_SYSCALL_MASK, true)?;
+        self.enable_native_msr(MSR_KERNEL_GS_BASE, true)?;
+        self.enable_native_msr(MSR_GS_BASE, true)?;
+        self.enable_native_msr(MSR_FS_BASE, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_CS, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_ESP, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_EIP, true)?;
+        self.enable_native_msr(MSR_IA32_TSC, true)?;
+        self.enable_native_msr(MSR_TSC_AUX, true)
+    }
+
+    pub fn long_mode(&self) -> Result<(), Error> {
+        self.write_vmcs(VMCS_GUEST_CS, 0x10)?;
+        self.write_vmcs(VMCS_GUEST_CS_AR, 0xa09b)?;
+        self.write_vmcs(VMCS_GUEST_CS_LIMIT, 0xffffffff)?;
+        self.write_vmcs(VMCS_GUEST_CS_BASE, 0)?;
+
+        self.write_vmcs(VMCS_GUEST_DS, 0x18)?;
+        self.write_vmcs(VMCS_GUEST_DS_AR, 0xc093)?;
+        self.write_vmcs(VMCS_GUEST_DS_LIMIT, 0xffffffff)?;
+        self.write_vmcs(VMCS_GUEST_DS_BASE, 0)?;
+
+        self.write_vmcs(VMCS_GUEST_ES, 0x18)?;
+        self.write_vmcs(VMCS_GUEST_ES_AR, 0xc093)?;
+        self.write_vmcs(VMCS_GUEST_ES_LIMIT, 0xffffffff)?;
+        self.write_vmcs(VMCS_GUEST_ES_BASE, 0)?;
+
+        self.write_vmcs(VMCS_GUEST_FS, 0)?;
+        self.write_vmcs(VMCS_GUEST_FS_AR, 0x93)?;
+        self.write_vmcs(VMCS_GUEST_FS_LIMIT, 0xffff)?;
+        self.write_vmcs(VMCS_GUEST_FS_BASE, 0)?;
+
+        self.write_vmcs(VMCS_GUEST_GS, 0)?;
+        self.write_vmcs(VMCS_GUEST_GS_AR, 0x93)?;
+        self.write_vmcs(VMCS_GUEST_GS_LIMIT, 0xffff)?;
+        self.write_vmcs(VMCS_GUEST_GS_BASE, 0)?;
+
+        self.write_vmcs(VMCS_GUEST_SS, 0x18)?;
+        self.write_vmcs(VMCS_GUEST_SS_AR, 0xc093)?;
+        self.write_vmcs(VMCS_GUEST_SS_LIMIT, 0xffffffff)?;
+        self.write_vmcs(VMCS_GUEST_SS_BASE, 0)?;
+
+        self.write_vmcs(VMCS_GUEST_LDTR, 0)?;
+        self.write_vmcs(VMCS_GUEST_LDTR_AR, 0x82)?;
+        self.write_vmcs(VMCS_GUEST_LDTR_LIMIT, 0xffff)?;
+        self.write_vmcs(VMCS_GUEST_LDTR_BASE, 0)?;
+
+        self.write_vmcs(VMCS_GUEST_GDTR_BASE, 0x17)?;
+        self.write_vmcs(VMCS_GUEST_GDTR_LIMIT, 0xfe0)?;
+
+        self.write_vmcs(VMCS_GUEST_TR, 0)?;
+        self.write_vmcs(VMCS_GUEST_TR_AR, 0x8b)?;
+        self.write_vmcs(VMCS_GUEST_TR_LIMIT, 0)?;
+        self.write_vmcs(VMCS_GUEST_TR_BASE, 0)?;
+
+        self.write_vmcs(VMCS_GUEST_IDTR_LIMIT, 0)?;
+        self.write_vmcs(VMCS_GUEST_IDTR_BASE, 0)?;
+
+        let cap_pin = vmx_read_capability(VMXCap::PIN)?;
+        let cap_cpu = vmx_read_capability(VMXCap::CPU)?;
+        let cap_cpu2 = vmx_read_capability(VMXCap::CPU2)?;
+        let cap_entry = vmx_read_capability(VMXCap::ENTRY)?;
+
+        self.write_vmcs(VMCS_CTRL_PIN_BASED, cap2ctrl(cap_pin, 0))?;
+        self.write_vmcs(
+            VMCS_CTRL_CPU_BASED,
+            cap2ctrl(
+                cap_cpu,
+                CPU_BASED_HLT | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE,
+            ),
+        )?;
+        // Hypervisor.framework does not support X2APIC virtualization
+        self.write_vmcs(
+            VMCS_CTRL_CPU_BASED2,
+            cap2ctrl(cap_cpu2, CPU_BASED2_RDTSCP | CPU_BASED2_VIRTUAL_APIC),
+        )?;
+        self.write_vmcs(
+            VMCS_CTRL_VMENTRY_CONTROLS,
+            cap2ctrl(cap_entry, VMENTRY_GUEST_IA32E),
+        )?;
+
+        self.write_vmcs(VMCS_CTRL_EXC_BITMAP, 0xffffffff & !(1 << 14))?;
+
+        let cr0 = X86_CR0_NE | X86_CR0_ET | X86_CR0_PE | X86_CR0_PG;
+        self.write_vmcs(VMCS_GUEST_CR0, cr0)?;
+        self.write_vmcs(VMCS_CTRL_CR0_MASK, X86_CR0_PE | X86_CR0_PG)?;
+        self.write_vmcs(VMCS_CTRL_CR0_SHADOW, X86_CR0_PE | X86_CR0_PG)?;
+
+        let cr4 = X86_CR4_VMXE | X86_CR4_OSFXSR | X86_CR4_OSXSAVE | X86_CR4_PAE;
+        self.write_vmcs(VMCS_GUEST_CR4, cr4)?;
+        self.write_vmcs(VMCS_CTRL_CR4_MASK, X86_CR4_VMXE)?;
+        self.write_vmcs(VMCS_CTRL_CR4_SHADOW, 0)?;
+
+        let efer = X86_EFER_LMA | X86_EFER_LME;
+        self.write_vmcs(VMCS_GUEST_IA32_EFER, efer)
     }
 }
 
