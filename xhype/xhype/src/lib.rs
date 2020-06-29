@@ -15,6 +15,9 @@ pub mod linux;
 #[allow(dead_code)]
 mod mach;
 pub mod utils;
+
+#[allow(dead_code)]
+pub mod virtio;
 mod vmexit;
 pub mod vthread;
 #[allow(dead_code)]
@@ -290,6 +293,9 @@ extern "C" {
     pub fn raw_vmcall(num: u64, args: *const u8);
 }
 
+/// num is the function number, args is a pointer to arguments
+/// currently the following functions are supported:
+/// num = 1, args = pointer to a c-style string: print the string
 pub fn vmcall(num: u64, args: *const u8) {
     unsafe {
         raw_vmcall(num, args);

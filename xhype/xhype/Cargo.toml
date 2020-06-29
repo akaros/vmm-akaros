@@ -16,3 +16,4 @@ cc = "1.0.46"
 
 [features]
 vthread_closure = []
+virtio_mmio_legacy = []

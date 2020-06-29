@@ -263,6 +263,9 @@ pub fn load_linux64(
 
     high_mem.write(bp, bp_offset, 0);
 
+    // setup virtio, fix me, not finished
+    // let virtio_mmio_base_addr_hint = high_mem.start + high_mem.size;
+
     // setup gdt
     let gdt_entries: [u64; 4] = [0, 0, 0x00af9a000000ffff, 0x00cf92000000ffff];
     high_mem.write(gdt_entries, gdt_offset, 0);
@@ -295,7 +298,7 @@ pub fn load_linux64(
     }
     let apic_page = MachVMBlock::new(PAGE_SIZE)?;
     mem_maps.insert(APIC_GPA, apic_page);
-    // mem_maps.insert(vapic_block_start, vapic_block);
+    mem_maps.insert(vapic_block_start, vapic_block);
     {
         let mut vm_ = vm.write().unwrap();
         vm_.map_guest_mem(mem_maps)?;

@@ -398,8 +398,9 @@ fn set_all_zero(rax: u64, size: u64) -> u64 {
 }
 
 const CONFIG_DATA: u16 = 0xcfc;
-const CONFIG_DATA2: u16 = 0xcfe; // fix me: what does 0xcfe mean?
+const CONFIG_DATA3: u16 = 0xcff;
 const CONFIG_ADDRESS: u16 = 0xcf8;
+
 fn cfg_address_handler(qual: u64, vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
     let cf8 = { gth.vm.read().unwrap().cf8 };
     let rax = vcpu.read_reg(X86Reg::RAX)?;
@@ -421,7 +422,7 @@ fn cfg_address_handler(qual: u64, vcpu: &VCPU, gth: &GuestThread) -> Result<Hand
         if bdf == 0 {
             // only host bridge is supported
             if io_in(qual) {
-                let mut v = gth.vm.read().unwrap().host_bridge_data[offset as usize >> 2];
+                let mut v = { gth.vm.read().unwrap().host_bridge_data[offset as usize >> 2] };
                 if size == 1 {
                     v >>= (port & 3) * 8;
                 } else if size == 2 {
@@ -522,16 +523,32 @@ pub fn unknown_port_handler(
     } else {
         error!("write to io port = {:x}, rax={:x}", port, rax);
     }
+    error!("instruction: {:02x?}", get_vmexit_instr(vcpu));
     Err(Error::Unhandled(VMX_REASON_IO, "unknown port"))
 }
 
 pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
     let qual = vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?;
-    let edx = (vcpu.read_reg(X86Reg::RDX)? & 0xffff) as u16;
-    match edx {
-        CONFIG_DATA | CONFIG_DATA2 => cfg_address_handler(qual, vcpu, gth),
+    match io_port(qual) {
+        CONFIG_DATA..=CONFIG_DATA3 => cfg_address_handler(qual, vcpu, gth),
         CONFIG_ADDRESS => cf8_handler(qual, vcpu, gth),
-        _ => unknown_port_handler(qual, vcpu, gth),
+        port => {
+            let instruction = get_vmexit_instr(vcpu)?;
+            let rax = vcpu.read_reg(X86Reg::RAX)?;
+            if instruction[0] == 0xe6 {
+                warn!(
+                    "silently accept OUT imm8, al, port = {:x}, rax = {:x}, instr = {:02x?}",
+                    port, rax, instruction
+                );
+                Ok(HandleResult::Next)
+            } else if instruction == [0xe4, 0x21] {
+                warn!("signifying there is no PIC");
+                vcpu.write_reg(X86Reg::RAX, rax | 0xff)?;
+                Ok(HandleResult::Next)
+            } else {
+                unknown_port_handler(qual, vcpu, gth)
+            }
+        }
     }
 }
 
