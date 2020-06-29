@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 use crate::mach::MachVMBlock;
 use crate::x86::*;
 use std::mem::size_of;

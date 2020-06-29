@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 extern "C" {
     fn cpuid(ieax: u32, iecx: u32, eaxp: *mut u32, ebxp: *mut u32, ecxp: *mut u32, edxp: *mut u32);
 }

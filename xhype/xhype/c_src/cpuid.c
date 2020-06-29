@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #include <stdint.h>
 
 void cpuid(uint32_t ieax, uint32_t iecx, uint32_t *eaxp, uint32_t *ebxp,

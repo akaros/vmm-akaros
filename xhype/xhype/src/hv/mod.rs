@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 use super::Error;
 
 #[allow(non_camel_case_types)]

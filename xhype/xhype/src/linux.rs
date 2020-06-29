@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 use super::consts::*;
 use super::mach::MachVMBlock;
 use super::x86::*;

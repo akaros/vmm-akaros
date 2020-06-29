@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #![cfg_attr(feature = "vthread_closure", feature(fn_traits))]
 #[allow(dead_code)]
 mod bios;

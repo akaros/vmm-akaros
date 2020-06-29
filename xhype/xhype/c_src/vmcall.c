@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #include <stdint.h>
 
 void raw_vmcall(uint64_t vmcall_nr, void* args)

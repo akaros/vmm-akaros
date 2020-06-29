@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 use super::X86Reg;
 
 // VMX exit reasons

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 use super::err::Error;
 use std::mem::size_of;
 use std::ops::{Index, IndexMut};

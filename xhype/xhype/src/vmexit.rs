@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
 #[allow(unused_imports)]
 use super::consts::msr::*;
 #[allow(unused_imports)]

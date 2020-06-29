@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 use crate::hv::vmx::get_guest_reg;
 #[allow(unused_imports)]
 use crate::{Error, GuestThread, HandleResult, X86Reg, VCPU};

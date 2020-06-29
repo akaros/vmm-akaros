@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
 use super::err::Error;
 use super::hlt;
 use super::mach::MachVMBlock;

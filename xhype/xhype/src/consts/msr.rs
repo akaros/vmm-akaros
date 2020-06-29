@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* CPU model specific register (MSR) numbers */
 
 /* x86-64 specific MSRs */
