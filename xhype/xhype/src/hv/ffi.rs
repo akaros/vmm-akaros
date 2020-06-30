@@ -33,7 +33,7 @@ pub const HV_NO_RESOURCES: hv_return_t = 0xfae94005;
 pub const HV_NO_DEVICE: hv_return_t = 0xfae94006;
 pub const HV_UNSUPPORTED: hv_return_t = 0xfae9400f;
 
-/// Options for hv_vcpu_create()
+/// Options for hv_vm_create()
 pub type hv_vm_options_t = u64;
 pub const HV_VM_DEFAULT: hv_vm_options_t = 0 << 0;
 
@@ -119,7 +119,7 @@ extern "C" {
     pub fn hv_vcpu_read_msr(vcpu: hv_vcpuid_t, msr: u32, value: *mut u64) -> hv_return_t;
 
     /// Set the value of an MSR of a vCPU
-    pub fn hv_vcpu_write_msr(vcpu: hv_vcpuid_t, msr: u32, value: *const u64) -> hv_return_t;
+    pub fn hv_vcpu_write_msr(vcpu: hv_vcpuid_t, msr: u32, value: u64) -> hv_return_t;
 }
 
 // Managing Timestamp-Counters (TSC)
