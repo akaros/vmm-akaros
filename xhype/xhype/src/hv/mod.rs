@@ -5,7 +5,7 @@ mod ffi;
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
 #[repr(C)]
-pub enum x86Reg {
+pub enum X86Reg {
     RIP,
     RFLAGS,
     RAX,
