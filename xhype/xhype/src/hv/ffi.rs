@@ -46,6 +46,16 @@ extern "C" {
     pub fn hv_vm_destroy() -> hv_return_t;
 }
 
+/// Type of a guest address space
+pub type hv_vm_space_t = u32;
+
+extern "C" {
+    /// Creates an additional guest address space for the current task
+    pub fn hv_vm_space_create(asid: *mut hv_vm_space_t) -> hv_return_t;
+    /// Destroys the address space instance associated with the current task
+    pub fn hv_vm_space_destroy(asid: hv_vm_space_t) -> hv_return_t;
+}
+
 /// Type of a vCPU ID
 pub type hv_vcpuid_t = c_uint;
 
@@ -56,6 +66,9 @@ pub const HV_VCPU_DEFAULT: u64 = 0;
 extern "C" {
     /// Creates a vCPU instance for the current thread
     pub fn hv_vcpu_create(vcpu: *mut hv_vcpuid_t, flags: hv_vm_options_t) -> hv_return_t;
+
+    /// Associates the vCPU instance with an allocated address space
+    pub fn hv_vcpu_set_space(vcpu: hv_vcpuid_t, asid: hv_vm_space_t) -> hv_return_t;
 
     /// Executes a vCPU
     pub fn hv_vcpu_run(vcpu: hv_vcpuid_t) -> hv_return_t;
@@ -160,6 +173,27 @@ extern "C" {
     /// Modifies the permissions of a region in the guest physical
     /// address space of the VM
     pub fn hv_vm_protect(gpa: hv_gpaddr_t, size: size_t, flags: hv_memory_flags_t) -> hv_return_t;
+
+    /// Maps a region in the virtual address space of the current task
+    /// into a guest physical address space of the VM
+    pub fn hv_vm_map_space(
+        asid: hv_vm_space_t,
+        uva: hv_uvaddr_t,
+        gpa: hv_gpaddr_t,
+        size: usize,
+        flags: hv_memory_flags_t,
+    ) -> hv_return_t;
+
+    /// Unmaps a region in a guest physical address space of the VM
+    pub fn hv_vm_unmap_space(asid: hv_vm_space_t, gpa: hv_gpaddr_t, size: usize) -> hv_return_t;
+
+    /// Modifies the permissions of a region in a guest physical address space of the VM
+    pub fn hv_vm_protect_space(
+        asid: hv_vm_space_t,
+        gpa: hv_gpaddr_t,
+        size: usize,
+        flags: hv_memory_flags_t,
+    ) -> hv_return_t;
 }
 
 // Managing Virtual Machine Control Structure (VMCS)
