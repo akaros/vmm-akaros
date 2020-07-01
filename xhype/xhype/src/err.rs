@@ -24,7 +24,7 @@ impl From<io::Error> for Error {
 
 impl From<(u32, &'static str)> for Error {
     fn from(e: (u32, &'static str)) -> Error {
-        Error::Ffi(e.0, e.1)
+        Error::FFI(e.0, e.1)
     }
 }
 
