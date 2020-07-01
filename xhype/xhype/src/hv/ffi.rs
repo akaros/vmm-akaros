@@ -18,8 +18,7 @@ THE SOFTWARE.
 */
 
 //! Bindings to the Hypervisor Framework
-
-use libc::*;
+use std::ffi::c_void;
 
 /// Hypervisor Framework return code
 pub type hv_return_t = u32;
@@ -57,7 +56,7 @@ extern "C" {
 }
 
 /// Type of a vCPU ID
-pub type hv_vcpuid_t = c_uint;
+pub type hv_vcpuid_t = u32;
 
 // Option for hv_vcpu_create()
 pub const HV_VCPU_DEFAULT: u64 = 0;
@@ -74,7 +73,7 @@ extern "C" {
     pub fn hv_vcpu_run(vcpu: hv_vcpuid_t) -> hv_return_t;
 
     /// Forces an immediate VMEXIT of a set of vCPUs of the VM
-    pub fn hv_vcpu_interrupt(vcpu: *const hv_vcpuid_t, vcpu_count: c_uint) -> hv_return_t;
+    pub fn hv_vcpu_interrupt(vcpu: *const hv_vcpuid_t, vcpu_count: u32) -> hv_return_t;
 
     /// Returns the cumulative execution time of a vCPU in nanoseconds
     pub fn hv_vcpu_get_exec_time(vcpu: hv_vcpuid_t, time: *mut u64) -> hv_return_t;
@@ -108,18 +107,15 @@ extern "C" {
 extern "C" {
     /// Returns the current architectural x86 floating point and
     /// SIMD state of a vCPU
-    pub fn hv_vcpu_read_fpstate(
-        vcpu: hv_vcpuid_t,
-        buffer: *mut c_void,
-        size: size_t,
-    ) -> hv_return_t;
+    pub fn hv_vcpu_read_fpstate(vcpu: hv_vcpuid_t, buffer: *mut c_void, size: usize)
+        -> hv_return_t;
 
     /// Sets the architectural x86 floating point and SIMD state of
     /// a vCPU
     pub fn hv_vcpu_write_fpstate(
         vcpu: hv_vcpuid_t,
         buffer: *const c_void,
-        size: size_t,
+        size: usize,
     ) -> hv_return_t;
 }
 
@@ -163,16 +159,16 @@ extern "C" {
     pub fn hv_vm_map(
         uva: hv_uvaddr_t,
         gpa: hv_gpaddr_t,
-        size: size_t,
+        size: usize,
         flags: hv_memory_flags_t,
     ) -> hv_return_t;
 
     /// Unmaps a region in the guest physical address space of the VM
-    pub fn hv_vm_unmap(gpa: hv_gpaddr_t, size: size_t) -> hv_return_t;
+    pub fn hv_vm_unmap(gpa: hv_gpaddr_t, size: usize) -> hv_return_t;
 
     /// Modifies the permissions of a region in the guest physical
     /// address space of the VM
-    pub fn hv_vm_protect(gpa: hv_gpaddr_t, size: size_t, flags: hv_memory_flags_t) -> hv_return_t;
+    pub fn hv_vm_protect(gpa: hv_gpaddr_t, size: usize, flags: hv_memory_flags_t) -> hv_return_t;
 
     /// Maps a region in the virtual address space of the current task
     /// into a guest physical address space of the VM
