@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+[package]
+name = "xhype"
+version = "0.1.0"
+edition = "2018"
+
+
+build = "build.rs"
+
+[dependencies]
