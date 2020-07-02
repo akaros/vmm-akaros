@@ -18,37 +18,118 @@ THE SOFTWARE.
 */
 
 /*!
-This is a Rust library that taps into functionality that enables
-hardware-accelerated execution of virtual machines on OS X.
-It binds to the `Hypervisor` framework on OS X, and exposes a safe Rust
-interface through the `xhypervisor` module, and an unsafe foreign function
-interface through the `xhypervisor::ffi` module.
-To use this library, you need
-* OS X Yosemite (10.10), or newer
-* an Intel processor with the VT-x feature set that includes Extended Page
-Tables (EPT) and Unrestricted Mode. To verify this, run and expect the following
-in your Terminal:
-  ```shell
-  $ sysctl kern.hv_support
-  kern.hv_support: 1
-  ```
+This mod is based on [xhypervisor](https://crates.io/crates/xhypervisor) and
+wraps the [Hypervisor](https://developer.apple.com/documentation/hypervisor)
+framework of macOS into safe Rust interfaces.
+
+This mod requires macOS (10.15) or newer.
 !*/
 
 #[allow(non_camel_case_types)]
 pub mod ffi;
 pub mod vmx;
 
+use crate::err::Error;
+use ffi::*;
+use vmx::*;
+
+#[inline]
+fn check_ret(hv_ret: u32, msg: &'static str) -> Result<(), Error> {
+    match hv_ret {
+        0 => Ok(()),
+        e => Err((e, msg))?,
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// vm create/destroy
+////////////////////////////////////////////////////////////////////////////////
+
+pub(crate) fn vm_create(flags: u64) -> Result<(), Error> {
+    check_ret(unsafe { hv_vm_create(flags) }, "hv_vm_create")
+}
+
+pub(crate) fn vm_destroy() -> Result<(), Error> {
+    check_ret(unsafe { hv_vm_destroy() }, "hv_vm_destroy")
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// guest physical memory address space
+////////////////////////////////////////////////////////////////////////////////
+
+/// Guest physical memory address space
+#[derive(Debug)]
+pub struct MemSpace {
+    pub(crate) id: u32,
+}
+
+/// default memory space that is available after `hv_vm_create()` is called.
+pub static DEFAULT_MEM_SPACE: MemSpace = MemSpace { id: 0 };
+
+impl MemSpace {
+    pub(crate) fn create() -> Result<Self, Error> {
+        let mut id: u32 = 0;
+        match unsafe { hv_vm_space_create(&mut id) } {
+            0 => Ok(MemSpace { id }),
+            n => Err((n, "hv_vm_space_create"))?,
+        }
+    }
+
+    fn destroy(&self) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vm_space_destroy(self.id) },
+            "hv_vm_space_destroy",
+        )
+    }
+
+    pub fn map(&mut self, uva: usize, gpa: usize, size: usize, flags: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe {
+                hv_vm_map_space(
+                    self.id,
+                    uva as *const std::ffi::c_void,
+                    gpa as u64,
+                    size,
+                    flags,
+                )
+            },
+            "hv_vm_map_space",
+        )
+    }
+
+    pub fn unmap(&mut self, gpa: usize, size: usize) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vm_unmap_space(self.id, gpa as u64, size) },
+            "hv_vm_unmap_space",
+        )
+    }
+}
+
+impl Drop for MemSpace {
+    fn drop(&mut self) {
+        self.destroy().unwrap();
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// virtual cpu
+////////////////////////////////////////////////////////////////////////////////
+
 /// Virtual CPU
+///
+/// A VCPU is bound to the thread which creates it. It should never be shared
+/// between threads or accessed by other threads. One thread can only create one
+/// VCPU.
 pub struct VCPU {
     /// Virtual CPU ID
-    pub id: u32,
+    pub(crate) id: u32,
 }
 
 /// x86 architectural register
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
 #[repr(C)]
-pub enum x86Reg {
+pub enum X86Reg {
     RIP,
     RFLAGS,
     RAX,
@@ -103,21 +184,341 @@ pub enum x86Reg {
     REGISTERS_MAX,
 }
 
+impl VCPU {
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
+    pub(crate) fn create() -> Result<Self, Error> {
+        let mut vcpu_id: u32 = 0;
+        let flags = HV_VCPU_DEFAULT;
+        match unsafe { hv_vcpu_create(&mut vcpu_id, flags) } {
+            0 => Ok(VCPU { id: vcpu_id }),
+            e => Err((e, "hv_vcpu_create"))?,
+        }
+    }
+
+    pub fn dump(&self) -> Result<(), Error> {
+        println!(
+            "VMCS_CTRL_PIN_BASED: {:x}",
+            self.read_vmcs(VMCS_CTRL_PIN_BASED)?
+        );
+        println!(
+            "VMCS_CTRL_CPU_BASED: {:x}",
+            self.read_vmcs(VMCS_CTRL_CPU_BASED)?
+        );
+        println!(
+            "VMCS_CTRL_CPU_BASED2: {:x}",
+            self.read_vmcs(VMCS_CTRL_CPU_BASED2)?
+        );
+        println!(
+            "VMCS_CTRL_VMENTRY_CONTROLS: {:x}",
+            self.read_vmcs(VMCS_CTRL_VMENTRY_CONTROLS)?
+        );
+        println!(
+            "VMCS_CTRL_EXC_BITMAP: {:x}",
+            self.read_vmcs(VMCS_CTRL_EXC_BITMAP)?
+        );
+        println!(
+            "VMCS_CTRL_CR0_MASK: {:x}",
+            self.read_vmcs(VMCS_CTRL_CR0_MASK)?
+        );
+        println!(
+            "VMCS_CTRL_CR0_SHADOW: {:x}",
+            self.read_vmcs(VMCS_CTRL_CR0_SHADOW)?
+        );
+        println!(
+            "VMCS_CTRL_CR4_MASK: {:x}",
+            self.read_vmcs(VMCS_CTRL_CR4_MASK)?
+        );
+        println!(
+            "VMCS_CTRL_CR4_SHADOW: {:x}",
+            self.read_vmcs(VMCS_CTRL_CR4_SHADOW)?
+        );
+        println!("VMCS_GUEST_CS: {:x}", self.read_vmcs(VMCS_GUEST_CS)?);
+        println!(
+            "VMCS_GUEST_CS_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_CS_LIMIT)?
+        );
+        println!("VMCS_GUEST_CS_AR: {:x}", self.read_vmcs(VMCS_GUEST_CS_AR)?);
+        println!(
+            "VMCS_GUEST_CS_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_CS_BASE)?
+        );
+        println!("VMCS_GUEST_DS: {:x}", self.read_vmcs(VMCS_GUEST_DS)?);
+        println!(
+            "VMCS_GUEST_DS_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_DS_LIMIT)?
+        );
+        println!("VMCS_GUEST_DS_AR: {:x}", self.read_vmcs(VMCS_GUEST_DS_AR)?);
+        println!(
+            "VMCS_GUEST_DS_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_DS_BASE)?
+        );
+        println!("VMCS_GUEST_ES: {:x}", self.read_vmcs(VMCS_GUEST_ES)?);
+        println!(
+            "VMCS_GUEST_ES_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_ES_LIMIT)?
+        );
+        println!("VMCS_GUEST_ES_AR: {:x}", self.read_vmcs(VMCS_GUEST_ES_AR)?);
+        println!(
+            "VMCS_GUEST_ES_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_ES_BASE)?
+        );
+        println!("VMCS_GUEST_FS: {:x}", self.read_vmcs(VMCS_GUEST_FS)?);
+        println!(
+            "VMCS_GUEST_FS_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_FS_LIMIT)?
+        );
+        println!("VMCS_GUEST_FS_AR: {:x}", self.read_vmcs(VMCS_GUEST_FS_AR)?);
+        println!(
+            "VMCS_GUEST_FS_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_FS_BASE)?
+        );
+        println!("VMCS_GUEST_GS: {:x}", self.read_vmcs(VMCS_GUEST_GS)?);
+        println!(
+            "VMCS_GUEST_GS_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_GS_LIMIT)?
+        );
+        println!("VMCS_GUEST_GS_AR: {:x}", self.read_vmcs(VMCS_GUEST_GS_AR)?);
+        println!(
+            "VMCS_GUEST_GS_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_GS_BASE)?
+        );
+        println!("VMCS_GUEST_SS: {:x}", self.read_vmcs(VMCS_GUEST_SS)?);
+        println!(
+            "VMCS_GUEST_SS_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_SS_LIMIT)?
+        );
+        println!("VMCS_GUEST_SS_AR: {:x}", self.read_vmcs(VMCS_GUEST_SS_AR)?);
+        println!(
+            "VMCS_GUEST_SS_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_SS_BASE)?
+        );
+        println!("VMCS_GUEST_LDTR: {:x}", self.read_vmcs(VMCS_GUEST_LDTR)?);
+        println!(
+            "VMCS_GUEST_LDTR_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_LDTR_LIMIT)?
+        );
+        println!(
+            "VMCS_GUEST_LDTR_AR: {:x}",
+            self.read_vmcs(VMCS_GUEST_LDTR_AR)?
+        );
+        println!(
+            "VMCS_GUEST_LDTR_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_LDTR_BASE)?
+        );
+        println!(
+            "VMCS_GUEST_GDTR_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_GDTR_BASE)?
+        );
+        println!(
+            "VMCS_GUEST_GDTR_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_GDTR_LIMIT)?
+        );
+        println!(
+            "VMCS_GUEST_IDTR_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_IDTR_LIMIT)?
+        );
+        println!(
+            "VMCS_GUEST_IDTR_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_IDTR_BASE)?
+        );
+        println!(
+            "VMCS_GUEST_IA32_EFER: {:x}",
+            self.read_vmcs(VMCS_GUEST_IA32_EFER)?
+        );
+        println!("RIP: {:x}", self.read_reg(X86Reg::RIP)?);
+        println!("RFLAGS: {:x}", self.read_reg(X86Reg::RFLAGS)?);
+        println!("RAX: {:x}", self.read_reg(X86Reg::RAX)?);
+        println!("RCX: {:x}", self.read_reg(X86Reg::RCX)?);
+        println!("RDX: {:x}", self.read_reg(X86Reg::RDX)?);
+        println!("RBX: {:x}", self.read_reg(X86Reg::RBX)?);
+        println!("RSI: {:x}", self.read_reg(X86Reg::RSI)?);
+        println!("RDI: {:x}", self.read_reg(X86Reg::RDI)?);
+        println!("RSP: {:x}", self.read_reg(X86Reg::RSP)?);
+        println!("RBP: {:x}", self.read_reg(X86Reg::RBP)?);
+        println!("R8: {:x}", self.read_reg(X86Reg::R8)?);
+        println!("R9: {:x}", self.read_reg(X86Reg::R9)?);
+        println!("R10: {:x}", self.read_reg(X86Reg::R10)?);
+        println!("R11: {:x}", self.read_reg(X86Reg::R11)?);
+        println!("R12: {:x}", self.read_reg(X86Reg::R12)?);
+        println!("R13: {:x}", self.read_reg(X86Reg::R13)?);
+        println!("R14: {:x}", self.read_reg(X86Reg::R14)?);
+        println!("R15: {:x}", self.read_reg(X86Reg::R15)?);
+        println!("CR0: {:x}", self.read_reg(X86Reg::CR0)?);
+        println!("CR2: {:x}", self.read_reg(X86Reg::CR2)?);
+        println!("CR3: {:x}", self.read_reg(X86Reg::CR3)?);
+        println!("CR4: {:x}", self.read_reg(X86Reg::CR4)?);
+        Ok(())
+    }
+
+    pub fn set_space(&self, space: &MemSpace) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_set_space(self.id, space.id) },
+            "hv_vcpu_set_space",
+        )
+    }
+
+    pub fn read_reg(&self, reg: X86Reg) -> Result<u64, Error> {
+        let mut value = 0;
+        match unsafe { hv_vcpu_read_register(self.id, reg, &mut value) } {
+            0 => Ok(value),
+            n => Err((n, "hv_vcpu_read_register"))?,
+        }
+    }
+
+    pub fn write_reg(&self, reg: X86Reg, value: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_write_register(self.id, reg, value) },
+            "hv_vcpu_write_register",
+        )
+    }
+
+    pub fn read_msr(&self, msr: u32) -> Result<u64, Error> {
+        let mut value = 0;
+        match unsafe { hv_vcpu_read_msr(self.id, msr, &mut value) } {
+            0 => Ok(value),
+            n => Err((n, "hv_vcpu_read_msr"))?,
+        }
+    }
+
+    pub fn write_msr(&self, msr: u32, value: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_write_msr(self.id, msr, value) },
+            "hv_vcpu_write_msr",
+        )
+    }
+
+    pub fn enable_native_msr(&self, msr: u32, enable: bool) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_enable_native_msr(self.id, msr, enable) },
+            "hv_vcpu_enable_native_msr",
+        )
+    }
+
+    pub fn run(&self) -> Result<(), Error> {
+        check_ret(unsafe { hv_vcpu_run(self.id) }, "hv_vcpu_run")
+    }
+
+    pub fn read_vmcs(&self, field: u32) -> Result<u64, Error> {
+        let mut value = 0;
+        match unsafe { hv_vmx_vcpu_read_vmcs(self.id, field, &mut value) } {
+            0 => Ok(value),
+            n => Err((n, "hv_vmx_vcpu_read_vmcs"))?,
+        }
+    }
+
+    pub fn write_vmcs(&self, field: u32, value: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vmx_vcpu_write_vmcs(self.id, field, value) },
+            "hv_vmx_vcpu_write_vmcs",
+        )
+    }
+
+    pub fn set_vapic_address(&self, address: usize) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vmx_vcpu_set_apic_address(self.id, address as u64) },
+            "hv_vmx_vcpu_set_apic_address",
+        )
+    }
+}
+
+impl Drop for VCPU {
+    fn drop(&mut self) {
+        // Before destroying a VCPU, always set its memory space to the default
+        // one, since it is observed that if a VCPU is set to a memory space A
+        // and then destroyed, destroying memory space A will result in an error.
+        self.set_space(&DEFAULT_MEM_SPACE).unwrap();
+        check_ret(unsafe { hv_vcpu_destroy(self.id) }, "hv_vcpu_destroy").unwrap();
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// VMX cabability
+////////////////////////////////////////////////////////////////////////////////
+
 /// VMX cabability
-#[allow(non_camel_case_types)]
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub enum VMXCap {
     /// Pin-based VMX capabilities
-    PINBASED = 0,
+    Pin = 0,
     /// Primary proc-based VMX capabilities
-    PROCBASED = 1,
+    CPU = 1,
     /// Secondary proc-based VMX capabilities
-    PROCBASED2 = 2,
+    CPU2 = 2,
     /// VM-entry VMX capabilities
-    ENTRY = 3,
+    Entry = 3,
     /// VM-exit VMX capabilities
-    EXIT = 4,
+    Exit = 4,
     /// VMX preemption timer frequency
-    PREEMPTION_TIMER = 32,
+    PreemptionTimer = 32,
+}
+
+pub fn vmx_read_capability(field: VMXCap) -> Result<u64, Error> {
+    let mut value = 0;
+    match unsafe { hv_vmx_read_capability(field, &mut value) } {
+        0 => Ok(value),
+        n => Err((n, "hv_vmx_read_capability"))?,
+    }
+}
+
+/// generate execution control of VMCS based on the capability and provided
+/// settings.
+pub fn gen_exec_ctrl(cap: u64, one_setting: u64, zero_setting: u64) -> u64 {
+    debug_assert_eq!(one_setting & zero_setting, 0);
+    let low = cap & 0xffffffff;
+    let high = cap >> 32;
+    debug_assert_eq!(high | one_setting, high);
+    debug_assert_eq!(low & !zero_setting, low);
+    one_setting | low
+}
+
+mod test {
+    #[allow(unused_imports)]
+    use super::vmx::*;
+    #[allow(unused_imports)]
+    use super::*;
+    #[test]
+    fn hv_vcpu_test() {
+        vm_create(0).unwrap();
+        let vcpu1_id;
+        {
+            let vcpu = VCPU::create().unwrap();
+            vcpu1_id = vcpu.id();
+            vcpu.write_reg(X86Reg::RFLAGS, 0x2u64).unwrap();
+            assert_eq!(vcpu.read_reg(X86Reg::RFLAGS).unwrap(), 0x2u64);
+            println!(
+                "vapic addr = {:x}",
+                vcpu.read_vmcs(VMCS_CTRL_APIC_ACCESS).unwrap()
+            );
+        }
+        let vcpu2_id;
+        {
+            let vcpu = VCPU::create().unwrap();
+            vcpu2_id = vcpu.id();
+            vcpu.write_vmcs(VMCS_CTRL_CR4_MASK, 0x2000).unwrap();
+            assert_eq!(vcpu.read_vmcs(VMCS_CTRL_CR4_MASK).unwrap(), 0x2000);
+        }
+        assert_eq!(vcpu1_id, vcpu2_id);
+        vm_destroy().unwrap();
+    }
+
+    #[test]
+    fn hv_mem_space_test() {
+        vm_create(0).unwrap();
+        let space1_id;
+        {
+            let space1 = MemSpace::create().unwrap();
+            space1_id = space1.id;
+        }
+        let space2_id;
+        {
+            let space2 = MemSpace::create().unwrap();
+            space2_id = space2.id;
+        }
+        assert_eq!(space1_id, space2_id);
+        vm_destroy().unwrap();
+    }
 }
