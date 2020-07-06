@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
-// VMCS constants from Hypervisor/hv_arch_vmx.h
+//! VMCS constants from Hypervisor/hv_arch_vmx.h
 
 pub const VMX_BASIC_TRUE_CTLS: u64 = 1 << 55;
 

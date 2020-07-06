@@ -3,7 +3,6 @@
 pub mod bios;
 pub mod consts;
 pub mod err;
-#[allow(dead_code)]
-mod hv;
+pub mod hv;
 pub mod linux;
 pub mod mach;

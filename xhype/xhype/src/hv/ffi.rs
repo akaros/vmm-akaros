@@ -94,12 +94,12 @@ extern "C" {
     /// of a vCPU
     pub fn hv_vcpu_read_register(
         vcpu: hv_vcpuid_t,
-        reg: super::x86Reg,
+        reg: super::X86Reg,
         value: *mut u64,
     ) -> hv_return_t;
 
     /// Sets the value of an architectural x86 register of a vCPU
-    pub fn hv_vcpu_write_register(vcpu: hv_vcpuid_t, reg: super::x86Reg, value: u64)
+    pub fn hv_vcpu_write_register(vcpu: hv_vcpuid_t, reg: super::X86Reg, value: u64)
         -> hv_return_t;
 }
 
