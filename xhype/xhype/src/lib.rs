@@ -9,6 +9,7 @@ pub mod linux;
 pub mod mach;
 pub mod utils;
 pub mod vmexit;
+pub mod vthread;
 
 use err::Error;
 use hv::ffi::{HV_MEMORY_EXEC, HV_MEMORY_READ, HV_MEMORY_WRITE};

@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+// Paging constants
+pub const PG_P: u64 = 1;
+pub const PG_RW: u64 = 1 << 1;
+pub const PG_PS: u64 = 1 << 7;
+
+pub const PAGE_SIZE: usize = 4096;
+
 /*
  * EFLAGS bits
  */
