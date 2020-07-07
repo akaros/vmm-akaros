@@ -127,7 +127,7 @@ pub struct VCPU {
 
 /// x86 architectural register
 #[allow(non_camel_case_types)]
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub enum X86Reg {
     RIP,
