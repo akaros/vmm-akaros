@@ -219,6 +219,10 @@ impl GuestThread {
     }
 }
 
+extern "C" {
+    pub fn hlt();
+}
+
 #[cfg(test)]
 mod test {
     use super::VMManager;
