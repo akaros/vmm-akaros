@@ -9,6 +9,7 @@ edition = "2018"
 build = "build.rs"
 
 [dependencies]
+log = "0.4"
 
 
 [build-dependencies]
