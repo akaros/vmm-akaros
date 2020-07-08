@@ -7,15 +7,18 @@ pub mod err;
 pub mod hv;
 pub mod linux;
 pub mod mach;
+pub mod vmexit;
 
 use err::Error;
 use hv::ffi::{HV_MEMORY_EXEC, HV_MEMORY_READ, HV_MEMORY_WRITE};
-use hv::{MemSpace, X86Reg};
+use hv::vmx::*;
+use hv::{MemSpace, X86Reg, DEFAULT_MEM_SPACE, VCPU};
 #[allow(unused_imports)]
 use log::*;
 use mach::{vm_self_region, MachVMBlock};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use vmexit::*;
 
 ////////////////////////////////////////////////////////////////////////////////
 // VMManager
@@ -134,6 +137,84 @@ impl GuestThread {
             init_vmcs: HashMap::new(),
             init_regs: HashMap::new(),
         }
+    }
+
+    pub fn start(mut self) -> std::thread::JoinHandle<Result<(), Error>> {
+        std::thread::spawn(move || {
+            let vcpu = VCPU::create()?;
+            self.run_on(&vcpu)
+        })
+    }
+
+    fn run_on(&mut self, vcpu: &VCPU) -> Result<(), Error> {
+        {
+            let mem_space = &(self.vm.read().unwrap()).mem_space;
+            vcpu.set_space(mem_space)?;
+        }
+        let result = self.run_on_inner(vcpu);
+        vcpu.set_space(&DEFAULT_MEM_SPACE)?;
+        result
+    }
+
+    fn run_on_inner(&mut self, vcpu: &VCPU) -> Result<(), Error> {
+        vcpu.enable_msrs()?;
+        for (field, value) in self.init_vmcs.iter() {
+            vcpu.write_vmcs(*field, *value)?;
+        }
+        for (reg, value) in self.init_regs.iter() {
+            vcpu.write_reg(*reg, *value)?;
+        }
+        let mut result: HandleResult;
+        let mut last_ept_gpa = 0;
+        let mut ept_count = 0;
+        loop {
+            vcpu.run()?;
+            let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
+            let rip = vcpu.read_reg(X86Reg::RIP)?;
+            let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
+            trace!(
+                "vm exit reason = {}, rip = {:x}, len = {}",
+                reason,
+                rip,
+                instr_len
+            );
+            result = match reason {
+                VMX_REASON_IRQ => HandleResult::Resume,
+                VMX_REASON_HLT => HandleResult::Exit,
+                VMX_REASON_EPT_VIOLATION => {
+                    let ept_gpa = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
+                    if cfg!(debug_assertions) {
+                        if ept_gpa == last_ept_gpa {
+                            ept_count += 1;
+                        } else {
+                            ept_count = 0;
+                            last_ept_gpa = ept_gpa;
+                        }
+                        if ept_count > 10 {
+                            let err_msg = format!(
+                                "EPT violation at {:x} for {} times",
+                                last_ept_gpa, ept_count
+                            );
+                            error!("{}", &err_msg);
+                            return Err((reason, err_msg))?;
+                        }
+                    }
+                    handle_ept_violation(vcpu, self, ept_gpa as usize)?
+                }
+                _ => {
+                    let err_msg =
+                        format!("handler for vm exit code 0x{:x} is not implemented", reason);
+                    error!("{}", err_msg);
+                    Err((reason, err_msg))?
+                }
+            };
+            match result {
+                HandleResult::Exit => break,
+                HandleResult::Next => vcpu.write_reg(X86Reg::RIP, rip + instr_len)?,
+                HandleResult::Resume => (),
+            }
+        }
+        Ok(())
     }
 }
 
