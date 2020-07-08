@@ -29,6 +29,7 @@ This mod requires macOS (10.15) or newer.
 pub mod ffi;
 pub mod vmx;
 
+use crate::consts::msr::*;
 use crate::err::Error;
 use ffi::*;
 use vmx::*;
@@ -421,6 +422,21 @@ impl VCPU {
             unsafe { hv_vmx_vcpu_set_apic_address(self.id, address as u64) },
             "hv_vmx_vcpu_set_apic_address",
         )
+    }
+
+    pub fn enable_msrs(&self) -> Result<(), Error> {
+        self.enable_native_msr(MSR_STAR, true)?;
+        self.enable_native_msr(MSR_LSTAR, true)?;
+        self.enable_native_msr(MSR_CSTAR, true)?;
+        self.enable_native_msr(MSR_SYSCALL_MASK, true)?;
+        self.enable_native_msr(MSR_KERNEL_GS_BASE, true)?;
+        self.enable_native_msr(MSR_GS_BASE, true)?;
+        self.enable_native_msr(MSR_FS_BASE, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_CS, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_ESP, true)?;
+        self.enable_native_msr(MSR_IA32_SYSENTER_EIP, true)?;
+        self.enable_native_msr(MSR_IA32_TSC, true)?;
+        self.enable_native_msr(MSR_TSC_AUX, true)
     }
 }
 
