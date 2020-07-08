@@ -22,6 +22,9 @@ pub const X86_EFLAGS_VIF: u64 = 0x00080000; /* Virtual Interrupt Flag */
 pub const X86_EFLAGS_VIP: u64 = 0x00100000; /* Virtual Interrupt Pending */
 pub const X86_EFLAGS_ID: u64 = 0x00200000; /* CPUID detection flag */
 
+pub const FL_RSVD_1: u64 = 0x00000002; // These 1s must be 1, rflags |= this
+pub const FL_RSVD_0: u64 = 0x003f7fd7; // These 0s must be 0, rflags &= this
+
 /*
  * Basic CPU control in CR0
  */
