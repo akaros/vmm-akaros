@@ -7,6 +7,7 @@ pub mod err;
 pub mod hv;
 pub mod linux;
 pub mod mach;
+pub mod utils;
 pub mod vmexit;
 
 use err::Error;
