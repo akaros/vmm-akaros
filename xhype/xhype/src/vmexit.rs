@@ -116,6 +116,66 @@ pub fn handle_cr(vcpu: &VCPU, _gth: &GuestThread) -> Result<HandleResult, Error>
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_RDMSR, VMX_REASON_WRMSR
+////////////////////////////////////////////////////////////////////////////////
+#[inline]
+fn write_msr_to_reg(msr_value: u64, vcpu: &VCPU) -> Result<(), Error> {
+    let new_eax = msr_value & 0xffffffff;
+    let new_edx = msr_value >> 32;
+    vcpu.write_reg(X86Reg::RAX, new_eax)?;
+    vcpu.write_reg(X86Reg::RDX, new_edx)
+}
+
+// TODO: A real CPU will generate #GP if an unknown MSR is accessed.
+fn msr_unknown(
+    _vcpu: &VCPU,
+    _gth: &GuestThread,
+    new_value: Option<u64>,
+    msr: u32,
+) -> Result<HandleResult, Error> {
+    if let Some(v) = new_value {
+        let err_msg = format!("guest writes {:x} to unknown msr: {:08x}", v, msr);
+        Err(Error::Unhandled(VMX_REASON_WRMSR, err_msg))
+    } else {
+        let err_msg = format!("guest reads from unknown msr: {:08x}", msr);
+        Err(Error::Unhandled(VMX_REASON_RDMSR, err_msg))
+    }
+}
+
+fn msr_efer(
+    vcpu: &VCPU,
+    _gth: &GuestThread,
+    new_value: Option<u64>,
+) -> Result<HandleResult, Error> {
+    if let Some(v) = new_value {
+        vcpu.write_vmcs(VMCS_GUEST_IA32_EFER, v)?;
+    } else {
+        let efer = vcpu.read_vmcs(VMCS_GUEST_IA32_EFER)?;
+        write_msr_to_reg(efer, vcpu)?;
+    }
+    Ok(HandleResult::Next)
+}
+
+pub fn handle_msr_access(
+    vcpu: &VCPU,
+    gth: &GuestThread,
+    read: bool,
+) -> Result<HandleResult, Error> {
+    let msr = (vcpu.read_reg(X86Reg::RCX)? & 0xffffffff) as u32;
+    let new_value = if read {
+        None
+    } else {
+        let edx = vcpu.read_reg(X86Reg::RDX)? & 0xffffffff;
+        let eax = vcpu.read_reg(X86Reg::RAX)? & 0xffffffff;
+        Some((edx << 32) | eax)
+    };
+    match msr {
+        MSR_EFER => msr_efer(vcpu, gth, new_value),
+        _ => msr_unknown(vcpu, gth, new_value, msr),
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // VMX_REASON_EPT_VIOLATION
 ////////////////////////////////////////////////////////////////////////////////
 
