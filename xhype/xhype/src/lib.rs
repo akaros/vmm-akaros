@@ -183,6 +183,7 @@ impl GuestThread {
             result = match reason {
                 VMX_REASON_IRQ => HandleResult::Resume,
                 VMX_REASON_HLT => HandleResult::Exit,
+                VMX_REASON_MOV_CR => handle_cr(vcpu, self)?,
                 VMX_REASON_EPT_VIOLATION => {
                     let ept_gpa = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
                     if cfg!(debug_assertions) {
