@@ -74,3 +74,7 @@ pub const X86_CR4_PCIDE: u64 = 0x00020000; /* enable PCID support */
 pub const X86_CR4_OSXSAVE: u64 = 0x00040000; /* enable xsave and xrestore */
 pub const X86_CR4_SMEP: u64 = 0x00100000; /* enable SMEP support */
 pub const X86_CR4_SMAP: u64 = 0x00200000; /* enable SMAP support */
+
+// APIC base
+pub const IO_APIC_BASE: usize = 0xfec00000;
+pub const APIC_BASE: usize = 0xfee00000;
