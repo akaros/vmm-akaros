@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+use crate::consts::x86::*;
+use crate::utils::round_up_4k;
+use crate::MachVMBlock;
+use std::mem::size_of;
+use std::num::Wrapping;
 // https://uefi.org/sites/default/files/resources/ACPI_6_3_May16.pdf
 
 // Table 5-27 RSDP Structure
@@ -209,3 +214,175 @@ pub const DSDT_DSDTTBL_HEADER: [u8; 36] = [
     0x00, 0x00, 0x00, 0x00, 0x49, 0x4E, 0x54, 0x4C, /* 00000018    "....INTL" */
     0x14, 0x02, 0x14, 0x20, /* 00000020    "... " */
 ];
+
+#[inline]
+fn gencsum(data: &[u8]) -> u8 {
+    (!data.iter().map(|x| Wrapping(*x)).sum::<Wrapping<u8>>() + Wrapping(1)).0
+}
+#[inline]
+fn acpi_tb_checksum(data: &[u8]) -> u8 {
+    data.iter().map(|x| Wrapping(*x)).sum::<Wrapping<u8>>().0
+}
+
+const SIG_RSDP: [u8; 8] = *b"RSD PTR ";
+const SIG_XSDT: [u8; 4] = *b"XSDT";
+const SIG_FADT: [u8; 4] = *b"FACP";
+const SIG_MADT: [u8; 4] = *b"APIC";
+
+const MADT_LOCAL_APIC: u8 = 0;
+const MADT_IO_APIC: u8 = 1;
+const MADT_LOCAL_X2APIC: u8 = 9;
+
+/// Setup the BIOS tables in the low memory
+///
+/// `start` is the base address of the BIOS tables in the physical address space
+/// of the guest. `low_mem` is a host virtual memory block which is mapped to
+/// the lowest memory of the guest. `cores` is the number of logical CPUs of the guest.
+/// Total number of bytes occupied by the BIOS tables is returned.
+pub fn setup_bios_tables(start: usize, low_mem: &mut MachVMBlock, cores: u32) -> usize {
+    // calculate offsets first
+    // variables with suffix `_offset` mean the offset in `low_mem`. They are
+    // also the guest physical address of the corresponding tables, since `low_mem` is
+    // mapped to the lowest memory of the guest's physical address space.
+    let rsdp_offset = start;
+    let xsdt_offset = rsdp_offset + size_of::<AcpiTableRsdp>();
+    let xsdt_entry_offset = xsdt_offset + size_of::<AcpiTableHeader>();
+    const NUM_XSDT_ENTRIES: usize = 8;
+    let fadt_offset = xsdt_entry_offset + NUM_XSDT_ENTRIES * size_of::<u64>();
+    let dsdt_offset = fadt_offset + size_of::<AcpiTableFadt>();
+    let madt_offset = dsdt_offset + DSDT_DSDTTBL_HEADER.len();
+    let madt_local_apic_offset = madt_offset + size_of::<AcpiTableMadt>();
+    let io_apic_offset = madt_local_apic_offset + cores as usize * size_of::<AcpiMadtLocalApic>();
+    let local_x2apic_offset = io_apic_offset + size_of::<AcpiMadtIoApic>();
+    let total_size =
+        local_x2apic_offset + cores as usize * size_of::<AcpiMadtLocalX2apic>() - start;
+
+    // setup rsdp
+    let rdsp = AcpiTableRsdp {
+        signature: SIG_RSDP,
+        revision: 2,
+        length: 36,
+        xsdt_physical_address: xsdt_offset as u64,
+        ..Default::default()
+    };
+    low_mem.write(rdsp, rsdp_offset, 0);
+    low_mem[rsdp_offset + ACPI_RSDP_CHECKSUM_OFFSET] =
+        gencsum(&low_mem[rsdp_offset..(rsdp_offset + ACPI_RSDP_CHECKSUM_LENGTH)]);
+    debug_assert_eq!(
+        acpi_tb_checksum(&low_mem[rsdp_offset..(rsdp_offset + ACPI_RSDP_CHECKSUM_LENGTH)]),
+        0
+    );
+    low_mem[rsdp_offset + ACPI_RSDP_XCHECKSUM_OFFSET] =
+        gencsum(&low_mem[rsdp_offset..(rsdp_offset + ACPI_RSDP_XCHECKSUM_LENGTH)]);
+    debug_assert_eq!(
+        acpi_tb_checksum(&low_mem[rsdp_offset..(rsdp_offset + ACPI_RSDP_XCHECKSUM_LENGTH)]),
+        0
+    );
+
+    // xsdt
+    let xsdt_total_length = size_of::<AcpiTableHeader>() + size_of::<u64>() * NUM_XSDT_ENTRIES;
+    let xsdt = AcpiTableHeader {
+        signature: SIG_XSDT,
+        length: xsdt_total_length as u32,
+        ..AcpiTableHeader::new()
+    };
+    low_mem.write(xsdt, xsdt_offset, 0);
+    // xsdt entries
+    let mut xsdt_entries: [u64; NUM_XSDT_ENTRIES] = [0; NUM_XSDT_ENTRIES];
+    xsdt_entries[0] = fadt_offset as u64;
+    xsdt_entries[3] = madt_offset as u64;
+    low_mem.write(xsdt_entries, xsdt_entry_offset, 0);
+    low_mem[xsdt_offset + ACPI_TABLE_HEADER_CHECKSUM_OFFSET] =
+        gencsum(&low_mem[xsdt_offset..(xsdt_offset + xsdt_total_length)]);
+    debug_assert_eq!(
+        acpi_tb_checksum(&low_mem[xsdt_offset..(xsdt_offset + xsdt_total_length)]),
+        0
+    );
+
+    // fadt
+    let fadt = AcpiTableFadt {
+        header: AcpiTableHeader {
+            signature: SIG_FADT,
+            length: size_of::<AcpiTableFadt>() as u32,
+            ..AcpiTableHeader::new()
+        },
+        xdsdt: dsdt_offset as u64,
+        ..Default::default()
+    };
+    low_mem.write(fadt, fadt_offset, 0);
+    low_mem[fadt_offset + ACPI_TABLE_HEADER_CHECKSUM_OFFSET] =
+        gencsum(&low_mem[fadt_offset..(fadt_offset + size_of::<AcpiTableFadt>())]);
+    debug_assert_eq!(
+        acpi_tb_checksum(&low_mem[fadt_offset..(fadt_offset + size_of::<AcpiTableFadt>())]),
+        0
+    );
+
+    // dsdt
+    low_mem.write(DSDT_DSDTTBL_HEADER, dsdt_offset, 0);
+
+    // madt
+    let madt_total_length = size_of::<AcpiTableMadt>()
+        + size_of::<AcpiMadtIoApic>()
+        + cores as usize * (size_of::<AcpiMadtLocalApic>() + size_of::<AcpiMadtLocalX2apic>());
+    let madt = AcpiTableMadt {
+        header: AcpiTableHeader {
+            signature: SIG_MADT,
+            length: madt_total_length as u32,
+            ..AcpiTableHeader::new()
+        },
+        address: APIC_BASE as u32,
+        flags: 0,
+        ..Default::default()
+    };
+    low_mem.write(madt, madt_offset, 0);
+
+    // local apic
+    for i in 0..cores {
+        let lapic = AcpiMadtLocalApic {
+            header: AcpiSubtableHader {
+                r#type: MADT_LOCAL_APIC,
+                length: size_of::<AcpiMadtLocalApic>() as u8,
+            },
+            processor_id: i as u8,
+            id: i as u8,
+            lapic_flags: 1,
+        };
+        low_mem.write(lapic, madt_local_apic_offset, i as usize)
+    }
+
+    // io apiic
+    let io_apic = AcpiMadtIoApic {
+        header: AcpiSubtableHader {
+            r#type: MADT_IO_APIC,
+            length: size_of::<AcpiMadtIoApic>() as u8,
+        },
+        id: 0,
+        address: IO_APIC_BASE as u32,
+        global_irq_base: 0,
+        ..Default::default()
+    };
+    low_mem.write(io_apic, io_apic_offset, 0);
+
+    // local x2apic
+    for i in 0..cores {
+        let x2apic = AcpiMadtLocalX2apic {
+            header: AcpiSubtableHader {
+                r#type: MADT_LOCAL_X2APIC,
+                length: size_of::<AcpiMadtLocalX2apic>() as u8,
+            },
+            local_apic_id: i,
+            uid: i,
+            lapic_flags: 1,
+            ..Default::default()
+        };
+        low_mem.write(x2apic, local_x2apic_offset, i as usize)
+    }
+    low_mem[madt_offset + ACPI_TABLE_HEADER_CHECKSUM_OFFSET] =
+        gencsum(&low_mem[madt_offset..(madt_offset + madt_total_length)]);
+    debug_assert_eq!(
+        acpi_tb_checksum(&low_mem[madt_offset..(madt_offset + madt_total_length)]),
+        0
+    );
+
+    round_up_4k(total_size)
+}
