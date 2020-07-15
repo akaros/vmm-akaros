@@ -445,6 +445,7 @@ impl Drop for VCPU {
         // Before destroying a VCPU, always set its memory space to the default
         // one, since it is observed that if a VCPU is set to a memory space A
         // and then destroyed, destroying memory space A will result in an error.
+        // see details in fn hv_mem_space_destroy_test().
         self.set_space(&DEFAULT_MEM_SPACE).unwrap();
         check_ret(unsafe { hv_vcpu_destroy(self.id) }, "hv_vcpu_destroy").unwrap();
     }
@@ -536,5 +537,36 @@ mod test {
         }
         assert_eq!(space1_id, space2_id);
         vm_destroy().unwrap();
+    }
+
+    /*
+        This test is meant to show that, if we set one vcpu to a non-default
+        memory space and then destroy that vcpu, then we cannot destroy this
+        memory space any more, because the memory space will still think itself
+        occupied by some vcpu and hv_vm_space_destroy() will return HV_BUSY.
+        This is why in VCPU::drop() we have to set the memory space of any vcpu
+        to the default memory space and then destroy the vcpu.
+        tested on macOS 10.15.5
+    */
+    #[test]
+    fn hv_mem_space_destroy_test() {
+        let mut ret;
+        let mut space_id = 0;
+        let mut vcpu = 0;
+        unsafe {
+            ret = hv_vm_create(HV_VM_DEFAULT);
+            assert_eq!(ret, HV_SUCCESS);
+            ret = hv_vm_space_create(&mut space_id);
+            assert_eq!(ret, HV_SUCCESS);
+            ret = hv_vcpu_create(&mut vcpu, HV_VCPU_DEFAULT);
+            assert_eq!(ret, HV_SUCCESS);
+            ret = hv_vcpu_set_space(vcpu, space_id);
+            assert_eq!(ret, HV_SUCCESS);
+            ret = hv_vcpu_destroy(vcpu);
+            assert_eq!(ret, HV_SUCCESS);
+            ret = hv_vm_space_destroy(space_id);
+            // vcpu is destroyed, but the memory space still think itself occupied by the vcpu
+            assert_eq!(ret, HV_BUSY);
+        }
     }
 }
