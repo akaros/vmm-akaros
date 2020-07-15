@@ -1,6 +1,22 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
-use std::mem::size_of;
+use crate::bios::setup_bios_tables;
+use crate::consts::msr::*;
+use crate::consts::x86::*;
+use crate::consts::*;
+use crate::err::Error;
+use crate::hv::vmx::*;
+use crate::hv::*;
+use crate::mach::MachVMBlock;
+use crate::utils::round_up_4k;
+use crate::{GuestThread, VirtualMachine};
+#[allow(unused_imports)]
+use log::*;
+use std::collections::HashMap;
+use std::fs::{metadata, File};
+use std::io::{Read, Seek, SeekFrom};
+use std::mem::{size_of, transmute, zeroed};
+use std::sync::{Arc, RwLock};
 
 pub const E820_RAM: u32 = 1;
 pub const E820_RESERVED: u32 = 2;
@@ -54,6 +70,14 @@ pub struct BootParams {
     _pad9: [u8; 276],                  // 0xeec
 }
 
+impl BootParams {
+    pub fn new() -> Self {
+        // We don't want unsafe,
+        // but rust cannot derive Default for T[n] where n > 32
+        unsafe { zeroed() }
+    }
+}
+
 #[repr(C, packed)]
 pub struct SetupHeader {
     setup_sects: u8,
@@ -95,4 +119,255 @@ pub struct SetupHeader {
     init_size: u32,
     handover_offset: u32,
     kernel_info_offset: u32,
+}
+
+const HDRS: u32 = 0x53726448;
+const MAGIC_AA55: u16 = 0xaa55;
+
+const HEADER_OFFSET: u64 = 0x01f1;
+const ENTRY_64: usize = 0x200;
+
+const LOW64K: usize = 64 * KiB;
+const LOW_MEM_SIZE: usize = 1 * MiB;
+const RD_BASE: usize = 16 * MiB;
+
+const XLF_KERNEL_64: u16 = 1 << 0;
+const XLF_CAN_BE_LOADED_ABOVE_4G: u16 = 1 << 1;
+
+// The implementation of load_linux64 is inspired by
+// https://github.com/akaros/akaros/blob/master/user/vmm/memory.c and
+// https://github.com/machyve/xhyve/blob/master/src/firmware/kexec.c
+
+pub fn load_linux64(
+    vm: &Arc<RwLock<VirtualMachine>>,
+    kernel_path: String,
+    rd_path: Option<String>,
+    cmd_line: String,
+    mem_size: usize,
+) -> Result<Vec<GuestThread>, Error> {
+    let kn_meta = metadata(&kernel_path)?;
+    let mut kernel_file = File::open(&kernel_path)?;
+    let mut header: SetupHeader = {
+        let mut buff = [0u8; size_of::<SetupHeader>()];
+        kernel_file.seek(SeekFrom::Start(HEADER_OFFSET))?;
+        kernel_file.read_exact(&mut buff)?;
+        unsafe { transmute(buff) }
+    };
+
+    // first we make sure that the kernel is not too old
+
+    // from https://www.kernel.org/doc/Documentation/x86/boot.txt:
+    // For backwards compatibility, if the setup_sects field contains 0, the
+    // real value is 4.
+    if header.setup_sects == 0 {
+        header.setup_sects = 4;
+    }
+    // check magic numbers
+    if header.boot_flag != MAGIC_AA55 {
+        return Err("magic number missing: header.boot_flag != 0xaa55".to_string())?;
+    }
+    if header.header != HDRS {
+        return Err("magic number missing: header.header != 0x53726448".to_string())?;
+    }
+    // only accept version >= 2.12
+    if header.version < 0x020c {
+        let version = header.version;
+        return Err(format!("kernel version too old: 0x{:04x}", version))?;
+    }
+    if header.xloadflags | XLF_KERNEL_64 == 0 {
+        return Err("kernel has no 64-bit entry point".to_string())?;
+    }
+    if header.xloadflags | XLF_CAN_BE_LOADED_ABOVE_4G == 0 {
+        return Err("kernel cannot be loaded above 4GiB".to_string())?;
+    }
+    if header.relocatable_kernel == 0 {
+        return Err("kernel is not relocatable".to_string())?;
+    }
+
+    // setup low memory
+    let mut low_mem = MachVMBlock::new(LOW_MEM_SIZE)?;
+
+    let num_gth = { vm.read().unwrap().cores };
+    setup_bios_tables(0xe0000, &mut low_mem, num_gth);
+
+    // calculate offsets
+    let bp_offset = mem_size - PAGE_SIZE;
+    let cmd_line_offset = bp_offset - PAGE_SIZE;
+    let gdt_offset = cmd_line_offset - PAGE_SIZE;
+    let pml4_offset = gdt_offset - PAGE_SIZE;
+    let first_pdpt_offset = pml4_offset - PAGE_SIZE;
+
+    let mut high_mem = MachVMBlock::new_aligned(mem_size, header.kernel_alignment as usize)?;
+
+    let mut bp = BootParams::new();
+    bp.hdr = header;
+
+    // load kernel
+    let kernel_offset = (bp.hdr.setup_sects as u64 + 1) * 512;
+    kernel_file.seek(SeekFrom::Start(kernel_offset))?;
+    kernel_file.read_exact(&mut high_mem[0..(kn_meta.len() - kernel_offset) as usize])?;
+
+    // command line
+    if cmd_line.len() > bp.hdr.cmdline_size as usize {
+        let cmdline_size = bp.hdr.cmdline_size;
+        return Err(format!(
+            "length of command line exceeds bp.hdr.cmdline_size = {}\n{}",
+            cmdline_size, cmd_line
+        ))?;
+    }
+    &high_mem[cmd_line_offset..(cmd_line_offset + cmd_line.len())]
+        .clone_from_slice(cmd_line.as_bytes());
+    let cmd_line_base = high_mem.start + cmd_line_offset;
+    bp.hdr.cmd_line_ptr = (cmd_line_base & 0xffffffff) as u32;
+    bp.ext_cmd_line_ptr = (cmd_line_base >> 32) as u32;
+
+    // load ramdisk
+    let rd_size;
+    let rd_mem;
+    if let Some(rd_path) = rd_path {
+        let rd_meta = metadata(&rd_path)?;
+        let mut rd_file = File::open(&rd_path)?;
+        rd_size = rd_meta.len() as usize;
+        let mut rd_mem_block = MachVMBlock::new(round_up_4k(rd_size))?;
+        rd_file.read_exact(&mut rd_mem_block[0..rd_size])?;
+        bp.hdr.ramdisk_image = (RD_BASE & 0xffffffff) as u32;
+        bp.ext_ramdisk_image = (RD_BASE >> 32) as u32;
+        bp.hdr.ramdisk_size = (rd_size & 0xffffffff) as u32;
+        bp.ext_ramdisk_size = (rd_size >> 32) as u32;
+        bp.hdr.root_dev = 0x100;
+        rd_mem = Some(rd_mem_block);
+    } else {
+        rd_size = 0;
+        rd_mem = None;
+    }
+
+    // setup e820 tables
+
+    // The first page is always reserved.
+    let entry_first_page = E820Entry {
+        addr: 0,
+        size: PAGE_SIZE as u64,
+        r#type: E820_RESERVED,
+    };
+    // a tiny bit of low memory for trampoline
+    let entry_low = E820Entry {
+        addr: PAGE_SIZE as u64,
+        size: (LOW64K - PAGE_SIZE) as u64,
+        r#type: E820_RAM,
+    };
+    // memory from 64K to LOW_MEM_SIZE is reserved
+    let entry_reserved = E820Entry {
+        addr: LOW64K as u64,
+        size: (LOW_MEM_SIZE - LOW64K) as u64,
+        r#type: E820_RESERVED,
+    };
+    // main memory above 4GB
+    let entry_main = E820Entry {
+        addr: high_mem.start as u64,
+        size: high_mem.size as u64,
+        r#type: E820_RAM,
+    };
+    bp.e820_table[0] = entry_first_page;
+    bp.e820_table[1] = entry_low;
+    bp.e820_table[2] = entry_reserved;
+    if rd_mem.is_none() {
+        bp.e820_table[3] = entry_main;
+        bp.e820_entries = 4;
+    } else {
+        let entry_rd = E820Entry {
+            addr: RD_BASE as u64,
+            size: round_up_4k(rd_size) as u64,
+            r#type: E820_RAM,
+        };
+        bp.e820_table[3] = entry_rd;
+        bp.e820_table[4] = entry_main;
+        bp.e820_entries = 5;
+    };
+    high_mem.write(bp, bp_offset, 0);
+
+    // setup gdt
+    let gdt_entries: [u64; 4] = [0, 0, 0x00af9a000000ffff, 0x00cf92000000ffff];
+    high_mem.write(gdt_entries, gdt_offset, 0);
+
+    // identity paging
+    let pml4e_base = high_mem.start + pml4_offset;
+    let first_pdpt_base = high_mem.start + first_pdpt_offset;
+    let pml4e: u64 = PG_P | PG_RW | first_pdpt_base as u64;
+    high_mem.write(pml4e, pml4_offset, 0);
+    for i in 0..512 {
+        let pdpte: u64 = (i << 30) | PG_P | PG_RW | PG_PS;
+        high_mem.write(pdpte, first_pdpt_offset, i as usize);
+    }
+
+    // setup initial register values and VMCS fields
+    let init_regs = vec![
+        (X86Reg::CR3, pml4e_base as u64),
+        (X86Reg::GDT_BASE, (high_mem.start + gdt_offset) as u64),
+        (X86Reg::GDT_LIMIT, 0x1f),
+        (X86Reg::RFLAGS, FL_RSVD_1),
+        (X86Reg::RSI, (high_mem.start + bp_offset) as u64),
+        (X86Reg::RIP, (high_mem.start + ENTRY_64) as u64),
+    ]
+    .into_iter()
+    .collect();
+
+    let ctrl_pin = gen_exec_ctrl(vmx_read_capability(VMXCap::Pin)?, 0, 0);
+    let ctrl_cpu = gen_exec_ctrl(
+        vmx_read_capability(VMXCap::CPU)?,
+        CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE,
+        0,
+    );
+    let ctrl_cpu2 = gen_exec_ctrl(vmx_read_capability(VMXCap::CPU2)?, CPU_BASED2_RDTSCP, 0);
+    let ctrl_entry = gen_exec_ctrl(vmx_read_capability(VMXCap::Entry)?, VMENTRY_GUEST_IA32E, 0);
+    let cr0 = X86_CR0_NE | X86_CR0_PE | X86_CR0_PG;
+    let cr4 = X86_CR4_VMXE | X86_CR4_PAE;
+    let efer = EFER_LMA | EFER_LME;
+    let init_vmcs = vec![
+        (VMCS_GUEST_CS_AR, 0xa09b),
+        (VMCS_GUEST_CS_LIMIT, 0xffffffff),
+        (VMCS_GUEST_DS_AR, 0xc093),
+        (VMCS_GUEST_DS_LIMIT, 0xffffffff),
+        (VMCS_GUEST_ES_AR, 0xc093),
+        (VMCS_GUEST_ES_LIMIT, 0xffffffff),
+        (VMCS_GUEST_FS_AR, 0x93),
+        (VMCS_GUEST_GS_AR, 0x93),
+        (VMCS_GUEST_SS_AR, 0xc093),
+        (VMCS_GUEST_SS_LIMIT, 0xffffffff),
+        (VMCS_GUEST_LDTR_AR, 0x82),
+        (VMCS_GUEST_TR_AR, 0x8b),
+        (VMCS_CTRL_PIN_BASED, ctrl_pin),
+        (VMCS_CTRL_CPU_BASED, ctrl_cpu),
+        (VMCS_CTRL_CPU_BASED2, ctrl_cpu2),
+        (VMCS_CTRL_VMENTRY_CONTROLS, ctrl_entry),
+        (VMCS_CTRL_EXC_BITMAP, 0xffffffff & !(1 << 14) & !(1 << 3)), // currently we track all exceptions except #BP and #PF.
+        (VMCS_GUEST_CR0, cr0),
+        (VMCS_CTRL_CR0_MASK, X86_CR0_PE | X86_CR0_PG),
+        (VMCS_CTRL_CR0_SHADOW, cr0),
+        (VMCS_GUEST_CR4, cr4),
+        (VMCS_CTRL_CR4_MASK, X86_CR4_VMXE),
+        (VMCS_CTRL_CR4_SHADOW, 0),
+        (VMCS_GUEST_IA32_EFER, efer),
+    ]
+    .into_iter()
+    .collect();
+
+    let mut mem_maps = HashMap::new();
+    mem_maps.insert(0, low_mem);
+    mem_maps.insert(high_mem.start, high_mem);
+    if let Some(rd_mem_block) = rd_mem {
+        mem_maps.insert(RD_BASE, rd_mem_block);
+    }
+    {
+        let mut vm_ = vm.write().unwrap();
+        vm_.map_guest_mem(mem_maps)?;
+    }
+
+    let mut guest_threads: Vec<GuestThread> =
+        (0..num_gth).map(|i| GuestThread::new(vm, i)).collect();
+
+    // guest thread 0 is the BSP, bootstrap processor
+    guest_threads[0].init_regs = init_regs;
+    guest_threads[0].init_vmcs = init_vmcs;
+
+    Ok(guest_threads)
 }
