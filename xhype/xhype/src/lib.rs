@@ -55,13 +55,13 @@ impl Drop for VMManager {
 /// A VirtualMachine is the physical hardware seen by a guest, including physical
 /// memory, number of cpu cores, etc.
 pub struct VirtualMachine {
-    pub(crate) mem_space: MemSpace,
+    pub(crate) mem_space: RwLock<MemSpace>,
     cores: u32,
     // the memory that is specifically allocated for the guest. For a vthread,
     // it contains its stack and a paging structure. For a kernel, it contains
     // its bios tables, APIC pages, high memory, etc.
     // the format is: guest virtual address -> host memory block
-    pub(crate) mem_maps: HashMap<usize, MachVMBlock>,
+    pub(crate) mem_maps: RwLock<HashMap<usize, MachVMBlock>>,
     threads: Option<Vec<GuestThread>>,
 }
 
@@ -70,31 +70,32 @@ impl VirtualMachine {
     // sure that hv_vm_create() is called before hv_vm_space_create() is called
     fn new(_vmm: &VMManager, cores: u32) -> Result<Self, Error> {
         let mut vm = VirtualMachine {
-            mem_space: MemSpace::create()?,
+            mem_space: RwLock::new(MemSpace::create()?),
             cores,
-            mem_maps: HashMap::new(),
+            mem_maps: RwLock::new(HashMap::new()),
             threads: None,
         };
         vm.gpa2hva_map()?;
         Ok(vm)
     }
 
-    pub(crate) fn map_guest_mem(&mut self, maps: HashMap<usize, MachVMBlock>) -> Result<(), Error> {
-        self.mem_maps = maps;
-        for (gpa, mem_block) in self.mem_maps.iter() {
+    pub(crate) fn map_guest_mem(&self, maps: HashMap<usize, MachVMBlock>) -> Result<(), Error> {
+        let mut mem_space = self.mem_space.write().unwrap();
+        for (gpa, mem_block) in maps.iter() {
             info!(
                 "map gpa={:x} to hva={:x}, size={} pages",
                 gpa,
                 mem_block.start,
                 mem_block.size / 4096
             );
-            self.mem_space.map(
+            mem_space.map(
                 mem_block.start,
                 *gpa,
                 mem_block.size,
                 HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
             )?;
         }
+        *self.mem_maps.write().unwrap() = maps;
         Ok(())
     }
 
@@ -102,12 +103,12 @@ impl VirtualMachine {
     // address.
     fn gpa2hva_map(&mut self) -> Result<(), Error> {
         let mut trial_addr = 1;
+        let mut mem_space = self.mem_space.write().unwrap();
         loop {
             match vm_self_region(trial_addr) {
                 Ok((start, size, info)) => {
                     if info.protection > 0 {
-                        self.mem_space
-                            .map(start, start, size, info.protection as u64)?;
+                        mem_space.map(start, start, size, info.protection as u64)?;
                     }
                     trial_addr = start + size;
                 }
@@ -125,14 +126,14 @@ impl VirtualMachine {
 ////////////////////////////////////////////////////////////////////////////////
 
 pub struct GuestThread {
-    pub vm: Arc<RwLock<VirtualMachine>>,
+    pub vm: Arc<VirtualMachine>,
     pub id: u32,
     pub init_vmcs: HashMap<u32, u64>,
     pub init_regs: HashMap<X86Reg, u64>,
 }
 
 impl GuestThread {
-    pub fn new(vm: &Arc<RwLock<VirtualMachine>>, id: u32) -> Self {
+    pub fn new(vm: &Arc<VirtualMachine>, id: u32) -> Self {
         GuestThread {
             vm: Arc::clone(vm),
             id: id,
@@ -149,10 +150,7 @@ impl GuestThread {
     }
 
     fn run_on(&mut self, vcpu: &VCPU) -> Result<(), Error> {
-        {
-            let mem_space = &(self.vm.read().unwrap()).mem_space;
-            vcpu.set_space(mem_space)?;
-        }
+        vcpu.set_space(&self.vm.mem_space.read().unwrap())?;
         let result = self.run_on_inner(vcpu);
         vcpu.set_space(&DEFAULT_MEM_SPACE)?;
         result

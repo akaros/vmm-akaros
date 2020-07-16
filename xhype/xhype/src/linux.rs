@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::fs::{metadata, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::mem::{size_of, transmute, zeroed};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 pub const E820_RAM: u32 = 1;
 pub const E820_RESERVED: u32 = 2;
@@ -139,7 +139,7 @@ const XLF_CAN_BE_LOADED_ABOVE_4G: u16 = 1 << 1;
 // https://github.com/machyve/xhyve/blob/master/src/firmware/kexec.c
 
 pub fn load_linux64(
-    vm: &Arc<RwLock<VirtualMachine>>,
+    vm: &Arc<VirtualMachine>,
     kernel_path: String,
     rd_path: Option<String>,
     cmd_line: String,
@@ -187,7 +187,7 @@ pub fn load_linux64(
     // setup low memory
     let mut low_mem = MachVMBlock::new(LOW_MEM_SIZE)?;
 
-    let num_gth = { vm.read().unwrap().cores };
+    let num_gth = vm.cores;
     setup_bios_tables(0xe0000, &mut low_mem, num_gth);
 
     // calculate offsets
@@ -357,10 +357,7 @@ pub fn load_linux64(
     if let Some(rd_mem_block) = rd_mem {
         mem_maps.insert(RD_BASE, rd_mem_block);
     }
-    {
-        let mut vm_ = vm.write().unwrap();
-        vm_.map_guest_mem(mem_maps)?;
-    }
+    vm.map_guest_mem(mem_maps)?;
 
     let mut guest_threads: Vec<GuestThread> =
         (0..num_gth).map(|i| GuestThread::new(vm, i)).collect();
