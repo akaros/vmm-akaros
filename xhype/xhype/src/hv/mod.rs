@@ -567,6 +567,8 @@ mod test {
             ret = hv_vm_space_destroy(space_id);
             // vcpu is destroyed, but the memory space still think itself occupied by the vcpu
             assert_eq!(ret, HV_BUSY);
+            ret = hv_vm_destroy();
+            assert_eq!(ret, HV_SUCCESS);
         }
     }
 }
