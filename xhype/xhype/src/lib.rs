@@ -180,6 +180,7 @@ impl GuestThread {
             );
             result = match reason {
                 VMX_REASON_IRQ => HandleResult::Resume,
+                VMX_REASON_CPUID => handle_cpuid(&vcpu, self)?,
                 VMX_REASON_HLT => HandleResult::Exit,
                 VMX_REASON_MOV_CR => handle_cr(vcpu, self)?,
                 VMX_REASON_RDMSR => handle_msr_access(vcpu, self, true)?,

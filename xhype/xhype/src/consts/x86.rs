@@ -78,3 +78,17 @@ pub const X86_CR4_SMAP: u64 = 0x00200000; /* enable SMAP support */
 // APIC base
 pub const IO_APIC_BASE: usize = 0xfec00000;
 pub const APIC_BASE: usize = 0xfee00000;
+
+/*
+ * CPUID bits
+ */
+// eax = 0x1
+pub const CPUID_MONITOR: u32 = 1 << 3;
+pub const CPUID_VMX: u32 = 1 << 5;
+pub const CPUID_PDCM: u32 = 1 << 15;
+pub const CPUID_XSAVE: u32 = 1 << 26;
+pub const CPUID_OSXSAVE: u32 = 1 << 27;
+pub const CPUID_HV: u32 = 1 << 31;
+
+// eax = 0x7
+pub const CPUID_TSC_ADJUST: u32 = 1 << 1;
