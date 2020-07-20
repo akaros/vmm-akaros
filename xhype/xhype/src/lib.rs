@@ -135,6 +135,7 @@ pub struct GuestThread {
     pub id: u32,
     pub init_vmcs: HashMap<u32, u64>,
     pub init_regs: HashMap<X86Reg, u64>,
+    pub pat_msr: u64,
 }
 
 impl GuestThread {
@@ -144,6 +145,7 @@ impl GuestThread {
             id: id,
             init_vmcs: HashMap::new(),
             init_regs: HashMap::new(),
+            pat_msr: 0,
         }
     }
 
