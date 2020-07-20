@@ -7,6 +7,7 @@ pub mod err;
 pub mod hv;
 pub mod linux;
 pub mod mach;
+pub mod serial;
 pub mod utils;
 pub mod vmexit;
 pub mod vthread;
@@ -18,6 +19,7 @@ use hv::{MemSpace, X86Reg, DEFAULT_MEM_SPACE, VCPU};
 #[allow(unused_imports)]
 use log::*;
 use mach::{vm_self_region, MachVMBlock};
+use serial::Serial;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use vmexit::*;
@@ -63,6 +65,8 @@ pub struct VirtualMachine {
     // the format is: guest virtual address -> host memory block
     pub(crate) mem_maps: RwLock<HashMap<usize, MachVMBlock>>,
     threads: Option<Vec<GuestThread>>,
+    // serial ports
+    pub(crate) com1: RwLock<Serial>,
 }
 
 impl VirtualMachine {
@@ -74,6 +78,7 @@ impl VirtualMachine {
             cores,
             mem_maps: RwLock::new(HashMap::new()),
             threads: None,
+            com1: RwLock::new(Serial::default()),
         };
         vm.gpa2hva_map()?;
         Ok(vm)
@@ -185,6 +190,7 @@ impl GuestThread {
                 VMX_REASON_MOV_CR => handle_cr(vcpu, self)?,
                 VMX_REASON_RDMSR => handle_msr_access(vcpu, self, true)?,
                 VMX_REASON_WRMSR => handle_msr_access(vcpu, self, false)?,
+                VMX_REASON_IO => handle_io(vcpu, self)?,
                 VMX_REASON_EPT_VIOLATION => {
                     let ept_gpa = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
                     if cfg!(debug_assertions) {

@@ -178,6 +178,49 @@ pub fn handle_msr_access(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// VMX_REASON_IO
+////////////////////////////////////////////////////////////////////////////////
+
+struct ExitQualIO(u64);
+
+impl ExitQualIO {
+    pub fn size(&self) -> u64 {
+        (self.0 & 0b111) + 1 // Vol.3, table 27-5
+    }
+
+    pub fn is_in(&self) -> bool {
+        (self.0 >> 3) & 1 == 1
+    }
+
+    pub fn port(&self) -> u16 {
+        ((self.0 >> 16) & 0xffff) as u16
+    }
+}
+
+const COM1_BASE: u16 = 0x3f8;
+const COM1_MAX: u16 = 0x3ff;
+
+pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
+    let qual = ExitQualIO(vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?);
+    let rax = vcpu.read_reg(X86Reg::RAX)?;
+    let port = qual.port();
+    match port {
+        COM1_BASE..=COM1_MAX => {
+            if qual.is_in() {
+                let v = gth.vm.com1.write().unwrap().read(port - COM1_BASE);
+                // fixme: handle partial registers
+                vcpu.write_reg(X86Reg::RAX, v as u64)?;
+            } else {
+                let v = (rax & 0xff) as u8;
+                gth.vm.com1.write().unwrap().write(port - COM1_BASE, v);
+            }
+        }
+        _ => return Err((VMX_REASON_IO, format!("cannot handle IO port 0x{:x}", port)))?,
+    }
+    Ok(HandleResult::Next)
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // VMX_REASON_EPT_VIOLATION
 ////////////////////////////////////////////////////////////////////////////////
 

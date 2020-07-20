@@ -10,6 +10,7 @@ build = "build.rs"
 
 [dependencies]
 log = "0.4"
+bitfield = "0.13.2"
 
 
 [build-dependencies]
