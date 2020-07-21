@@ -7,6 +7,7 @@ pub mod err;
 pub mod hv;
 pub mod linux;
 pub mod mach;
+pub mod pci;
 pub mod serial;
 pub mod utils;
 pub mod vmexit;
@@ -19,9 +20,10 @@ use hv::{MemSpace, X86Reg, DEFAULT_MEM_SPACE, VCPU};
 #[allow(unused_imports)]
 use log::*;
 use mach::{vm_self_region, MachVMBlock};
+use pci::PciBus;
 use serial::Serial;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use vmexit::*;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -67,6 +69,7 @@ pub struct VirtualMachine {
     threads: Option<Vec<GuestThread>>,
     // serial ports
     pub(crate) com1: RwLock<Serial>,
+    pub pci_bus: Mutex<PciBus>,
 }
 
 impl VirtualMachine {
@@ -79,6 +82,7 @@ impl VirtualMachine {
             mem_maps: RwLock::new(HashMap::new()),
             threads: None,
             com1: RwLock::new(Serial::default()),
+            pci_bus: Mutex::new(PciBus::new()),
         };
         vm.gpa2hva_map()?;
         Ok(vm)
