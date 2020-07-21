@@ -197,6 +197,10 @@ impl ExitQualIO {
     }
 }
 
+const PCI_CONFIG_ADDR: u16 = 0xcf8;
+const PCI_CONFIG_DATA: u16 = 0xcfc;
+const PCI_CONFIG_DATA_MAX: u16 = 0xcff;
+
 const COM1_BASE: u16 = 0x3f8;
 const COM1_MAX: u16 = 0x3ff;
 
@@ -204,15 +208,46 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
     let qual = ExitQualIO(vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?);
     let rax = vcpu.read_reg(X86Reg::RAX)?;
     let port = qual.port();
+    let size = qual.size();
     match port {
         COM1_BASE..=COM1_MAX => {
             if qual.is_in() {
                 let v = gth.vm.com1.write().unwrap().read(port - COM1_BASE);
-                // fixme: handle partial registers
-                vcpu.write_reg(X86Reg::RAX, v as u64)?;
+                vcpu.write_reg_16_low(X86Reg::RAX, v)?;
             } else {
                 let v = (rax & 0xff) as u8;
                 gth.vm.com1.write().unwrap().write(port - COM1_BASE, v);
+            }
+        }
+        PCI_CONFIG_ADDR => {
+            if qual.is_in() {
+                let v = gth.vm.pci_bus.lock().unwrap().config_addr.0;
+                vcpu.write_reg(X86Reg::RAX, v as u64)?;
+            } else {
+                let v = (rax & 0xffffffff) as u32;
+                gth.vm.pci_bus.lock().unwrap().config_addr.0 = v;
+            }
+        }
+        PCI_CONFIG_DATA..=PCI_CONFIG_DATA_MAX => {
+            if qual.is_in() {
+                let mut v = gth.vm.pci_bus.lock().unwrap().read();
+                if size == 1 {
+                    v >>= (port & 0b11) * 8;
+                    vcpu.write_reg_16_low(X86Reg::RAX, (v & 0xff) as u8)?;
+                } else if size == 2 {
+                    v >>= (port & 0b10) * 8;
+                    vcpu.write_reg_16(X86Reg::RAX, (v & 0xffff) as u16)?;
+                } else {
+                    vcpu.write_reg(X86Reg::RAX, v as u64)?;
+                }
+            } else {
+                if size == 4 {
+                    let mut pic_bus = gth.vm.pci_bus.lock().unwrap();
+                    pic_bus.write((rax & 0xffffffff) as u32);
+                } else {
+                    // to do:
+                    unimplemented!("guest writes non-4-byte data to pci");
+                }
             }
         }
         _ => return Err((VMX_REASON_IO, format!("cannot handle IO port 0x{:x}", port)))?,
