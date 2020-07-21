@@ -158,9 +158,42 @@ fn msr_efer(
     Ok(HandleResult::Next)
 }
 
+fn msr_read_only(
+    vcpu: &VCPU,
+    _gth: &GuestThread,
+    new_value: Option<u64>,
+    msr: u32,
+    default_value: u64,
+) -> Result<HandleResult, Error> {
+    if let Some(v) = new_value {
+        if v != default_value {
+            warn!(
+                "guest writes 0x{:x} to msr 0x{:x}, different from default 0x{:x}",
+                v, msr, default_value
+            );
+        }
+    } else {
+        write_msr_to_reg(default_value, vcpu)?;
+    }
+    Ok(HandleResult::Next)
+}
+
+fn msr_pat(
+    vcpu: &VCPU,
+    gth: &mut GuestThread,
+    new_value: Option<u64>,
+) -> Result<HandleResult, Error> {
+    if let Some(v) = new_value {
+        gth.pat_msr = v;
+    } else {
+        write_msr_to_reg(gth.pat_msr, vcpu)?;
+    }
+    Ok(HandleResult::Next)
+}
+
 pub fn handle_msr_access(
     vcpu: &VCPU,
-    gth: &GuestThread,
+    gth: &mut GuestThread,
     read: bool,
 ) -> Result<HandleResult, Error> {
     let msr = (vcpu.read_reg(X86Reg::RCX)? & 0xffffffff) as u32;
@@ -173,6 +206,13 @@ pub fn handle_msr_access(
     };
     match msr {
         MSR_EFER => msr_efer(vcpu, gth, new_value),
+        MSR_IA32_MISC_ENABLE => {
+            // enable fast string, disable pebs and bts.
+            let misc_enable = 1 | ((1 << 12) | (1 << 11));
+            msr_read_only(vcpu, gth, new_value, msr, misc_enable)
+        }
+        MSR_IA32_BIOS_SIGN_ID => msr_read_only(vcpu, gth, new_value, msr, 0),
+        MSR_IA32_CR_PAT => msr_pat(vcpu, gth, new_value),
         _ => msr_unknown(vcpu, gth, new_value, msr),
     }
 }
