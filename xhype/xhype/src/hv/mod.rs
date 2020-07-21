@@ -376,6 +376,18 @@ impl VCPU {
         )
     }
 
+    pub fn write_reg_16_low(&self, reg: X86Reg, value: u8) -> Result<(), Error> {
+        let original = self.read_reg(reg)?;
+        let new_value = (original & !0xff) | value as u64;
+        self.write_reg(reg, new_value)
+    }
+
+    pub fn write_reg_16(&self, reg: X86Reg, value: u16) -> Result<(), Error> {
+        let original = self.read_reg(reg)?;
+        let new_value = (original & !0xffff) | value as u64;
+        self.write_reg(reg, new_value)
+    }
+
     pub fn read_msr(&self, msr: u32) -> Result<u64, Error> {
         let mut value = 0;
         match unsafe { hv_vcpu_read_msr(self.id, msr, &mut value) } {
