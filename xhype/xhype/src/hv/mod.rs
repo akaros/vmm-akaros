@@ -584,3 +584,10 @@ mod test {
         }
     }
 }
+
+pub fn interrupt_vcpu(ids: &[u32]) -> Result<(), Error> {
+    check_ret(
+        unsafe { hv_vcpu_interrupt(ids.as_ptr(), ids.len() as u32) },
+        "hv_vcpu_interrupt",
+    )
+}
