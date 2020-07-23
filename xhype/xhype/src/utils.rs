@@ -9,6 +9,20 @@ pub fn round_down_4k(num: usize) -> usize {
     num & !0xfff
 }
 
+pub fn mach_abs_time() -> u64 {
+    unsafe { mach_absolute_time() }
+}
+
+pub fn mach_timebase_factor() -> Option<(u32, u32)> {
+    let mut numer = 0;
+    let mut denom = 0;
+    let success = unsafe { mach_timebase(&mut numer, &mut denom) };
+    if success {
+        Some((numer, denom))
+    } else {
+        None
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::round_up_4k;
