@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-
+pub mod apic;
 pub mod bios;
 pub mod consts;
 pub mod cpuid;
 pub mod decode;
 pub mod err;
 pub mod hv;
+pub mod ioapic;
 pub mod linux;
 pub mod mach;
 pub mod pci;
@@ -14,17 +15,23 @@ pub mod utils;
 pub mod vmexit;
 pub mod vthread;
 
+use apic::Apic;
+use consts::x86::*;
 use err::Error;
 use hv::ffi::{HV_MEMORY_EXEC, HV_MEMORY_READ, HV_MEMORY_WRITE};
 use hv::vmx::*;
 use hv::{MemSpace, X86Reg, DEFAULT_MEM_SPACE, VCPU};
+use ioapic::IoApic;
 #[allow(unused_imports)]
 use log::*;
 use mach::{vm_self_region, MachVMBlock};
 use pci::PciBus;
 use serial::Serial;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{
+    mpsc::{channel, Receiver},
+    Arc, Mutex, RwLock,
+};
 use vmexit::*;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -67,9 +74,10 @@ pub struct VirtualMachine {
     // its bios tables, APIC pages, high memory, etc.
     // the format is: guest virtual address -> host memory block
     pub(crate) mem_maps: RwLock<HashMap<usize, MachVMBlock>>,
-    threads: Option<Vec<GuestThread>>,
     // serial ports
     pub(crate) com1: RwLock<Serial>,
+    pub(crate) ioapic: Arc<RwLock<IoApic>>,
+    pub(crate) vcpu_ids: Arc<RwLock<Vec<u32>>>,
     pub pci_bus: Mutex<PciBus>,
 }
 
@@ -77,15 +85,25 @@ impl VirtualMachine {
     // make it private to force user to create a vm by calling create_vm to make
     // sure that hv_vm_create() is called before hv_vm_space_create() is called
     fn new(_vmm: &VMManager, cores: u32) -> Result<Self, Error> {
+        let ioapic = Arc::new(RwLock::new(IoApic::new()));
+        let vector_senders = Arc::new(Mutex::new(None));
+        let (irq_sender, irq_receiver) = channel::<u32>();
+        let vcpu_ids = Arc::new(RwLock::new(vec![u32::MAX; cores as usize]));
         let mut vm = VirtualMachine {
             mem_space: RwLock::new(MemSpace::create()?),
             cores,
             mem_maps: RwLock::new(HashMap::new()),
-            threads: None,
             com1: RwLock::new(Serial::default()),
             pci_bus: Mutex::new(PciBus::new()),
+            ioapic: ioapic.clone(),
+            vcpu_ids: vcpu_ids.clone(),
         };
         vm.gpa2hva_map()?;
+        // start a thread for IO APIC to collect interrupts
+        std::thread::Builder::new()
+            .name("IO APIC".into())
+            .spawn(move || IoApic::dispatch(vector_senders, irq_receiver, ioapic, vcpu_ids))
+            .expect("cannot create a thread for IO APIC");
         Ok(vm)
     }
 
@@ -141,6 +159,8 @@ pub struct GuestThread {
     pub init_vmcs: HashMap<u32, u64>,
     pub init_regs: HashMap<X86Reg, u64>,
     pub pat_msr: u64,
+    pub apic: Apic,
+    pub vector_receiver: Option<Receiver<u8>>,
 }
 
 impl GuestThread {
@@ -151,12 +171,18 @@ impl GuestThread {
             init_vmcs: HashMap::new(),
             init_regs: HashMap::new(),
             pat_msr: 0,
+            // assume that apic id = cpu id, and cpu 0 is BSP
+            apic: Apic::new(APIC_BASE as u64, true, false, id, id == 0),
+            vector_receiver: None,
         }
     }
 
     pub fn start(mut self) -> std::thread::JoinHandle<Result<(), Error>> {
         std::thread::spawn(move || {
             let vcpu = VCPU::create()?;
+            {
+                self.vm.vcpu_ids.write().unwrap()[self.id as usize] = vcpu.id();
+            }
             self.run_on(&vcpu)
         })
     }
@@ -180,7 +206,11 @@ impl GuestThread {
         let mut last_ept_gpa = 0;
         let mut ept_count = 0;
         loop {
-            vcpu.run()?;
+            if let Some(deadline) = self.apic.next_timer {
+                vcpu.run_until(deadline)?;
+            } else {
+                vcpu.run_until(u64::MAX)?;
+            }
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
             let rip = vcpu.read_reg(X86Reg::RIP)?;
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
@@ -191,13 +221,35 @@ impl GuestThread {
                 instr_len
             );
             result = match reason {
-                VMX_REASON_IRQ => HandleResult::Resume,
+                VMX_REASON_IRQ => {
+                    /*
+                    VMX_REASON_IRQ happens when IO APIC calls interrupt_vcpu(),
+                    see IoApic::dispatch(). But there are cases where this thread
+                    is not running vm, instead, its handling vm exits. In this
+                    case interrupt_vcpu() has no effects. Therefore we have
+                    to check IO APIC at the end of handling each vm exit,
+                    instead of only VMX_REASON_IRQ.
+                    */
+                    HandleResult::Resume
+                }
                 VMX_REASON_CPUID => handle_cpuid(&vcpu, self)?,
                 VMX_REASON_HLT => HandleResult::Exit,
                 VMX_REASON_MOV_CR => handle_cr(vcpu, self)?,
                 VMX_REASON_RDMSR => handle_msr_access(vcpu, self, true)?,
                 VMX_REASON_WRMSR => handle_msr_access(vcpu, self, false)?,
                 VMX_REASON_IO => handle_io(vcpu, self)?,
+                VMX_REASON_IRQ_WND => {
+                    debug_assert_eq!(vcpu.read_reg(X86Reg::RFLAGS)? & FL_IF, FL_IF);
+                    let mut ctrl_cpu = vcpu.read_vmcs(VMCS_CTRL_CPU_BASED)?;
+                    ctrl_cpu &= !CPU_BASED_IRQ_WND;
+                    vcpu.write_vmcs(VMCS_CTRL_CPU_BASED, ctrl_cpu)?;
+                    HandleResult::Resume
+                }
+                VMX_REASON_VMX_TIMER_EXPIRED => {
+                    debug_assert!(self.apic.next_timer.is_some());
+                    self.apic.fire_timer_interrupt(vcpu);
+                    HandleResult::Resume
+                }
                 VMX_REASON_EPT_VIOLATION => {
                     let ept_gpa = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
                     if cfg!(debug_assertions) {
@@ -230,6 +282,25 @@ impl GuestThread {
                 HandleResult::Next => vcpu.write_reg(X86Reg::RIP, rip + instr_len)?,
                 HandleResult::Resume => (),
             }
+            if result == HandleResult::Next {
+                /*
+                sti and mov-ss block interrupts until the end of the next instruction
+                Since the handle result is next, if there is existing sti/mov-ss
+                blocking, we should clear it.
+                */
+                let mut irq_ignore = vcpu.read_vmcs(VMCS_GUEST_IGNORE_IRQ)?;
+                if irq_ignore & 0b11 != 0 {
+                    irq_ignore &= !0b11;
+                    vcpu.write_vmcs(VMCS_GUEST_IGNORE_IRQ, irq_ignore)?;
+                }
+            }
+            // collect interrupt vector from IO APIC
+            if let Some(ref receiver) = self.vector_receiver {
+                if let Ok(vector) = receiver.try_recv() {
+                    self.apic.fire_external_interrupt(vector);
+                }
+            }
+            self.apic.inject_interrupt(vcpu)?;
         }
         Ok(())
     }

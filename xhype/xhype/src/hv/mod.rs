@@ -414,6 +414,13 @@ impl VCPU {
         check_ret(unsafe { hv_vcpu_run(self.id) }, "hv_vcpu_run")
     }
 
+    pub fn run_until(&self, deadline: u64) -> Result<(), Error> {
+        check_ret(
+            unsafe { hv_vcpu_run_until(self.id, deadline) },
+            "hv_vcpu_run_until",
+        )
+    }
+
     pub fn read_vmcs(&self, field: u32) -> Result<u64, Error> {
         let mut value = 0;
         match unsafe { hv_vmx_vcpu_read_vmcs(self.id, field, &mut value) } {
