@@ -71,7 +71,6 @@ pub struct VirtualMachine {
     // its bios tables, APIC pages, high memory, etc.
     // the format is: guest virtual address -> host memory block
     pub(crate) mem_maps: RwLock<HashMap<usize, MachVMBlock>>,
-    threads: Option<Vec<GuestThread>>,
     // serial ports
     pub(crate) com1: RwLock<Serial>,
     pub(crate) ioapic: Arc<RwLock<IoApic>>,
@@ -91,7 +90,6 @@ impl VirtualMachine {
             mem_space: RwLock::new(MemSpace::create()?),
             cores,
             mem_maps: RwLock::new(HashMap::new()),
-            threads: None,
             com1: RwLock::new(Serial::default()),
             pci_bus: Mutex::new(PciBus::new()),
             ioapic: ioapic.clone(),
