@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-
+pub mod apic;
 pub mod bios;
 pub mod consts;
 pub mod cpuid;
 pub mod decode;
 pub mod err;
 pub mod hv;
+pub mod ioapic;
 pub mod linux;
 pub mod mach;
 pub mod pci;
@@ -14,17 +15,20 @@ pub mod utils;
 pub mod vmexit;
 pub mod vthread;
 
+use apic::Apic;
+use consts::x86::*;
 use err::Error;
 use hv::ffi::{HV_MEMORY_EXEC, HV_MEMORY_READ, HV_MEMORY_WRITE};
 use hv::vmx::*;
 use hv::{MemSpace, X86Reg, DEFAULT_MEM_SPACE, VCPU};
+use ioapic::IoApic;
 #[allow(unused_imports)]
 use log::*;
 use mach::{vm_self_region, MachVMBlock};
 use pci::PciBus;
 use serial::Serial;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{mpsc::channel, Arc, Mutex, RwLock};
 use vmexit::*;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -70,6 +74,8 @@ pub struct VirtualMachine {
     threads: Option<Vec<GuestThread>>,
     // serial ports
     pub(crate) com1: RwLock<Serial>,
+    pub(crate) ioapic: Arc<RwLock<IoApic>>,
+    pub(crate) vcpu_ids: Arc<RwLock<Vec<u32>>>,
     pub pci_bus: Mutex<PciBus>,
 }
 
@@ -77,6 +83,10 @@ impl VirtualMachine {
     // make it private to force user to create a vm by calling create_vm to make
     // sure that hv_vm_create() is called before hv_vm_space_create() is called
     fn new(_vmm: &VMManager, cores: u32) -> Result<Self, Error> {
+        let ioapic = Arc::new(RwLock::new(IoApic::new()));
+        let vector_senders = Arc::new(Mutex::new(None));
+        let (irq_sender, irq_receiver) = channel::<u32>();
+        let vcpu_ids = Arc::new(RwLock::new(vec![u32::MAX; cores as usize]));
         let mut vm = VirtualMachine {
             mem_space: RwLock::new(MemSpace::create()?),
             cores,
@@ -84,8 +94,15 @@ impl VirtualMachine {
             threads: None,
             com1: RwLock::new(Serial::default()),
             pci_bus: Mutex::new(PciBus::new()),
+            ioapic: ioapic.clone(),
+            vcpu_ids: vcpu_ids.clone(),
         };
         vm.gpa2hva_map()?;
+        // start a thread for IO APIC to collect interrupts
+        std::thread::Builder::new()
+            .name("IO APIC".into())
+            .spawn(move || IoApic::dispatch(vector_senders, irq_receiver, ioapic, vcpu_ids))
+            .expect("cannot create a thread for IO APIC");
         Ok(vm)
     }
 
@@ -141,6 +158,7 @@ pub struct GuestThread {
     pub init_vmcs: HashMap<u32, u64>,
     pub init_regs: HashMap<X86Reg, u64>,
     pub pat_msr: u64,
+    pub apic: Apic,
 }
 
 impl GuestThread {
@@ -151,12 +169,17 @@ impl GuestThread {
             init_vmcs: HashMap::new(),
             init_regs: HashMap::new(),
             pat_msr: 0,
+            // assume that apic id = cpu id, and cpu 0 is BSP
+            apic: Apic::new(APIC_BASE as u64, true, false, id, id == 0),
         }
     }
 
     pub fn start(mut self) -> std::thread::JoinHandle<Result<(), Error>> {
         std::thread::spawn(move || {
             let vcpu = VCPU::create()?;
+            {
+                self.vm.vcpu_ids.write().unwrap()[self.id as usize] = vcpu.id();
+            }
             self.run_on(&vcpu)
         })
     }
