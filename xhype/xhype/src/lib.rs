@@ -28,7 +28,10 @@ use mach::{vm_self_region, MachVMBlock};
 use pci::PciBus;
 use serial::Serial;
 use std::collections::HashMap;
-use std::sync::{mpsc::channel, Arc, Mutex, RwLock};
+use std::sync::{
+    mpsc::{channel, Receiver},
+    Arc, Mutex, RwLock,
+};
 use vmexit::*;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -157,6 +160,7 @@ pub struct GuestThread {
     pub init_regs: HashMap<X86Reg, u64>,
     pub pat_msr: u64,
     pub apic: Apic,
+    pub vector_receiver: Option<Receiver<u8>>,
 }
 
 impl GuestThread {
@@ -169,6 +173,7 @@ impl GuestThread {
             pat_msr: 0,
             // assume that apic id = cpu id, and cpu 0 is BSP
             apic: Apic::new(APIC_BASE as u64, true, false, id, id == 0),
+            vector_receiver: None,
         }
     }
 
@@ -201,7 +206,11 @@ impl GuestThread {
         let mut last_ept_gpa = 0;
         let mut ept_count = 0;
         loop {
-            vcpu.run()?;
+            if let Some(deadline) = self.apic.next_timer {
+                vcpu.run_until(deadline)?;
+            } else {
+                vcpu.run_until(u64::MAX)?;
+            }
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
             let rip = vcpu.read_reg(X86Reg::RIP)?;
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
@@ -212,13 +221,35 @@ impl GuestThread {
                 instr_len
             );
             result = match reason {
-                VMX_REASON_IRQ => HandleResult::Resume,
+                VMX_REASON_IRQ => {
+                    /*
+                    VMX_REASON_IRQ happens when IO APIC calls interrupt_vcpu(),
+                    see IoApic::dispatch(). But there are cases where this thread
+                    is not running vm, instead, its handling vm exits. In this
+                    case interrupt_vcpu() has no effects. Therefore we have
+                    to check IO APIC at the end of handling each vm exit,
+                    instead of only VMX_REASON_IRQ.
+                    */
+                    HandleResult::Resume
+                }
                 VMX_REASON_CPUID => handle_cpuid(&vcpu, self)?,
                 VMX_REASON_HLT => HandleResult::Exit,
                 VMX_REASON_MOV_CR => handle_cr(vcpu, self)?,
                 VMX_REASON_RDMSR => handle_msr_access(vcpu, self, true)?,
                 VMX_REASON_WRMSR => handle_msr_access(vcpu, self, false)?,
                 VMX_REASON_IO => handle_io(vcpu, self)?,
+                VMX_REASON_IRQ_WND => {
+                    debug_assert_eq!(vcpu.read_reg(X86Reg::RFLAGS)? & FL_IF, FL_IF);
+                    let mut ctrl_cpu = vcpu.read_vmcs(VMCS_CTRL_CPU_BASED)?;
+                    ctrl_cpu &= !CPU_BASED_IRQ_WND;
+                    vcpu.write_vmcs(VMCS_CTRL_CPU_BASED, ctrl_cpu)?;
+                    HandleResult::Resume
+                }
+                VMX_REASON_VMX_TIMER_EXPIRED => {
+                    debug_assert!(self.apic.next_timer.is_some());
+                    self.apic.fire_timer_interrupt(vcpu);
+                    HandleResult::Resume
+                }
                 VMX_REASON_EPT_VIOLATION => {
                     let ept_gpa = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
                     if cfg!(debug_assertions) {
@@ -251,6 +282,25 @@ impl GuestThread {
                 HandleResult::Next => vcpu.write_reg(X86Reg::RIP, rip + instr_len)?,
                 HandleResult::Resume => (),
             }
+            if result == HandleResult::Next {
+                /*
+                sti and mov-ss block interrupts until the end of the next instruction
+                Since the handle result is next, if there is existing sti/mov-ss
+                blocking, we should clear it.
+                */
+                let mut irq_ignore = vcpu.read_vmcs(VMCS_GUEST_IGNORE_IRQ)?;
+                if irq_ignore & 0b11 != 0 {
+                    irq_ignore &= !0b11;
+                    vcpu.write_vmcs(VMCS_GUEST_IGNORE_IRQ, irq_ignore)?;
+                }
+            }
+            // collect interrupt vector from IO APIC
+            if let Some(ref receiver) = self.vector_receiver {
+                if let Ok(vector) = receiver.try_recv() {
+                    self.apic.fire_external_interrupt(vector);
+                }
+            }
+            self.apic.inject_interrupt(vcpu)?;
         }
         Ok(())
     }
