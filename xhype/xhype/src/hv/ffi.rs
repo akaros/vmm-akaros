@@ -72,6 +72,9 @@ extern "C" {
     /// Executes a vCPU
     pub fn hv_vcpu_run(vcpu: hv_vcpuid_t) -> hv_return_t;
 
+    /// Executes a vCPU until the given deadline. The timer deadline in mach absolute time units.
+    pub fn hv_vcpu_run_until(vcpu: hv_vcpuid_t, deadline: u64) -> hv_return_t;
+
     /// Forces an immediate VMEXIT of a set of vCPUs of the VM
     pub fn hv_vcpu_interrupt(vcpu: *const hv_vcpuid_t, vcpu_count: u32) -> hv_return_t;
 
