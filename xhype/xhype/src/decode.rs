@@ -154,7 +154,7 @@ fn modrm_sib_bytes(insn: &[u8], decode: &X86Decode) -> Result<u8, Error> {
 
 fn decode_opcode(insn: &[u8], decode: &mut X86Decode) -> Result<(), Error> {
     let opcodes = &insn[(decode.prefix_sz as usize)..];
-    let unknown = Err(format!("unknown opcodes: {:x?}", opcodes))?;
+    let unknown = Err(format!("unknown opcodes: {:x?}", opcodes).into());
     let reg = modrm_get_reg(insn, &decode);
     match opcodes[0] {
         0x80 => match reg? {
