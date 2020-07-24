@@ -499,3 +499,20 @@ impl Apic {
         self.apic_page.write(0u32, OFFSET_INIT_COUNT, 0);
     }
 }
+
+pub fn apic_access(
+    _vcpu: &VCPU,
+    gth: &mut GuestThread,
+    gpa: usize,
+    reg_val: &mut u64,
+    _size: u8,
+    store: bool,
+) -> Result<(), Error> {
+    let offset = gpa & 0xfff;
+    if store {
+        gth.apic.write(offset, *reg_val);
+    } else {
+        *reg_val = gth.apic.read(offset);
+    }
+    Ok(())
+}
