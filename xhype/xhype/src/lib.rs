@@ -10,6 +10,7 @@ pub mod ioapic;
 pub mod linux;
 pub mod mach;
 pub mod pci;
+pub mod rtc;
 pub mod serial;
 pub mod utils;
 pub mod vmexit;
@@ -26,6 +27,7 @@ use ioapic::IoApic;
 use log::*;
 use mach::{vm_self_region, MachVMBlock};
 use pci::PciBus;
+use rtc::Rtc;
 use serial::Serial;
 use std::collections::HashMap;
 use std::sync::{
@@ -78,6 +80,7 @@ pub struct VirtualMachine {
     pub(crate) com1: RwLock<Serial>,
     pub(crate) ioapic: Arc<RwLock<IoApic>>,
     pub(crate) vcpu_ids: Arc<RwLock<Vec<u32>>>,
+    pub(crate) rtc: RwLock<Rtc>,
     pub pci_bus: Mutex<PciBus>,
 }
 
@@ -97,6 +100,7 @@ impl VirtualMachine {
             pci_bus: Mutex::new(PciBus::new()),
             ioapic: ioapic.clone(),
             vcpu_ids: vcpu_ids.clone(),
+            rtc: RwLock::new(Rtc { reg: 0 }),
         };
         vm.gpa2hva_map()?;
         // start a thread for IO APIC to collect interrupts

@@ -244,12 +244,30 @@ const PCI_CONFIG_DATA_MAX: u16 = 0xcff;
 const COM1_BASE: u16 = 0x3f8;
 const COM1_MAX: u16 = 0x3ff;
 
+const RTC_PORT_REG: u16 = 0x70;
+const RTC_PORT_DATA: u16 = 0x71;
+
 pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
     let qual = ExitQualIO(vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?);
     let rax = vcpu.read_reg(X86Reg::RAX)?;
     let port = qual.port();
     let size = qual.size();
     match port {
+        RTC_PORT_REG => {
+            if qual.is_in() {
+                vcpu.write_reg_16_low(X86Reg::RAX, gth.vm.rtc.read().unwrap().reg)?;
+            } else {
+                gth.vm.rtc.write().unwrap().reg = (rax & 0xff) as u8;
+            }
+        }
+        RTC_PORT_DATA => {
+            if qual.is_in() {
+                let v = gth.vm.rtc.read().unwrap().read();
+                vcpu.write_reg_16_low(X86Reg::RAX, v)?;
+            } else {
+                unimplemented!();
+            }
+        }
         COM1_BASE..=COM1_MAX => {
             if qual.is_in() {
                 let v = gth.vm.com1.write().unwrap().read(port - COM1_BASE);
