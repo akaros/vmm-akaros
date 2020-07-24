@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+use crate::apic::apic_access;
 use crate::consts::msr::*;
 use crate::consts::x86::*;
 use crate::cpuid::do_cpuid;
+use crate::decode::emulate_mem_insn;
 use crate::err::Error;
 use crate::hv::vmx::*;
 use crate::hv::X86Reg;
 use crate::hv::{vmx_read_capability, VMXCap};
+use crate::ioapic::ioapic_access;
 use crate::{GuestThread, VCPU};
 #[allow(unused_imports)]
 use log::*;
@@ -380,11 +383,20 @@ pub fn ept_page_walk(qual: u64) -> bool {
 }
 
 pub fn handle_ept_violation(
-    _vcpu: &VCPU,
-    _gth: &mut GuestThread,
-    _gpa: usize,
+    vcpu: &VCPU,
+    gth: &mut GuestThread,
+    gpa: usize,
 ) -> Result<HandleResult, Error> {
-    // we need to handle MMIOs. But for now we just resume the vm.
+    let apic_base = gth.apic.msr_apic_base as usize & !0xfff;
+    if (gpa & !0xfff) == apic_base {
+        let insn = get_vmexit_instr(vcpu)?;
+        emulate_mem_insn(vcpu, gth, &insn, apic_access, gpa).unwrap();
+        return Ok(HandleResult::Next);
+    } else if (gpa & !0xfff) == IO_APIC_BASE {
+        let insn = get_vmexit_instr(vcpu)?;
+        emulate_mem_insn(vcpu, gth, &insn, ioapic_access, gpa)?;
+        return Ok(HandleResult::Next);
+    }
     Ok(HandleResult::Resume)
 }
 
