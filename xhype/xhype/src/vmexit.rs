@@ -158,6 +158,23 @@ fn msr_efer(
     Ok(HandleResult::Next)
 }
 
+fn msr_apicbase(
+    vcpu: &VCPU,
+    gth: &mut GuestThread,
+    new_value: Option<u64>,
+) -> Result<HandleResult, Error> {
+    if let Some(v) = new_value {
+        if v != gth.apic.msr_apic_base {
+            // to do: handle apic_base change
+            error!("guest changes MSR APIC_BASE");
+            gth.apic.msr_apic_base = v
+        }
+    } else {
+        write_msr_to_reg(gth.apic.msr_apic_base, vcpu)?;
+    }
+    Ok(HandleResult::Next)
+}
+
 fn msr_read_only(
     vcpu: &VCPU,
     _gth: &GuestThread,
@@ -213,6 +230,7 @@ pub fn handle_msr_access(
         }
         MSR_IA32_BIOS_SIGN_ID => msr_read_only(vcpu, gth, new_value, msr, 0),
         MSR_IA32_CR_PAT => msr_pat(vcpu, gth, new_value),
+        MSR_IA32_APIC_BASE => msr_apicbase(vcpu, gth, new_value),
         _ => msr_unknown(vcpu, gth, new_value, msr),
     }
 }
