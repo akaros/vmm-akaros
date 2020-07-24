@@ -77,7 +77,7 @@ pub struct VirtualMachine {
     // the format is: guest virtual address -> host memory block
     pub(crate) mem_maps: RwLock<HashMap<usize, MachVMBlock>>,
     // serial ports
-    pub(crate) com1: RwLock<Serial>,
+    pub(crate) com1: Mutex<Serial>,
     pub(crate) ioapic: Arc<RwLock<IoApic>>,
     pub(crate) vcpu_ids: Arc<RwLock<Vec<u32>>>,
     pub(crate) rtc: RwLock<Rtc>,
@@ -96,7 +96,7 @@ impl VirtualMachine {
             mem_space: RwLock::new(MemSpace::create()?),
             cores,
             mem_maps: RwLock::new(HashMap::new()),
-            com1: RwLock::new(Serial::default()),
+            com1: Mutex::new(Serial::new(4, irq_sender.clone())),
             pci_bus: Mutex::new(PciBus::new()),
             ioapic: ioapic.clone(),
             vcpu_ids: vcpu_ids.clone(),

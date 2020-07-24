@@ -2,9 +2,14 @@
 
 //https://www.freebsd.org/doc/en_US.ISO8859-1/articles/serial-uart/index.html
 
+use crate::utils::make_stdin_raw;
 use bitfield::bitfield;
 use log::*;
 use std::collections::VecDeque;
+use std::io::Read;
+use std::io::Write;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, RwLock};
 
 // offset 0x1, Interrupt Enable Register (IER)
 bitfield! {
@@ -28,7 +33,7 @@ bitfield! {
     #[derive(Copy, Clone, Debug, Default)]
     struct Fcr(u8);
     u8;
-    rtb, set_rtb: 6,7;    // receiver trigger bit
+    rtb, set_rtb: 7,6;    // receiver trigger bit
     dms, set_dms: 3,3;    // DMA Mode Select
     tfr, set_tfr: 2,2;    // Transmit FIFO Reset
     rfr, set_rfr: 1,1;    // Receiver FIFO Reset
@@ -40,7 +45,7 @@ bitfield! {
     #[derive(Copy, Clone, Debug, Default)]
     struct Iir(u8);
     u8;
-    intr_id, _: 1,3; // Interrupt ID
+    intr_id, _: 3,1; // Interrupt ID
     pending, _: 0,0; // Interrupt Pending Bit
 }
 
@@ -58,7 +63,7 @@ bitfield! {
     eps, _: 4,4;
     pen, _: 3,3;
     stb, _: 2,2;
-    word_length, _: 0,1;
+    word_length, _: 1,0;
 }
 
 impl Default for Lcr {
@@ -89,23 +94,23 @@ bitfield! {
     u8;
     err_fifo, _: 7,7;
     temt, _: 6,6; // transmitter empty
-    thre, _: 5,5; // transmitter holding register empty
+    thre, set_thre: 5,5; // transmitter holding register empty
     bi, _: 4,4; // break interrupt
     fe, _: 3,3; // framing error
     pe, _: 2,2; // parity error
     oe, _: 1,1; // overrun error
-    ready, _: 0,0; // data ready
+    ready, set_ready: 0,0; // data ready
 }
 
 impl Default for Lsr {
     fn default() -> Self {
-        Lsr(0b00100000) // Transmitter Holding Register Empty (THRE)
+        Lsr(0b01100000) // Transmitter Holding Register Empty (THRE)
     }
 }
 
 // TO-DO: send interrupts
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Serial {
     ier: Ier, // 0x1, Interrupt Enable Register (IER)
     fcr: Fcr, // 0x2, write, FIFO Control Register (FCR)
@@ -116,18 +121,55 @@ pub struct Serial {
     msr: u8,  // 0x6, Modem Status Register (MSR)
     scr: u8,  // 0x7, Scratch Register (SCR)
     divisor: u16,
-    in_data: VecDeque<u8>,
+    in_data: Arc<RwLock<VecDeque<u8>>>,
+    output_data: Vec<u8>,
+    irq: u32,
+    irq_sender: Sender<u32>,
 }
 
 impl Serial {
+    pub fn new(irq: u32, irq_sender: Sender<u32>) -> Self {
+        let in_data = Arc::new(RwLock::new(VecDeque::new()));
+        let r = Serial {
+            ier: Ier::default(),
+            fcr: Fcr::default(),
+            iir: Iir::default(),
+            lcr: Lcr::default(),
+            mcr: Mcr::default(),
+            lsr: Lsr::default(),
+            msr: 0,
+            scr: 0,
+            divisor: 0,
+            in_data: in_data.clone(),
+            output_data: Vec::new(),
+            irq,
+            irq_sender: irq_sender.clone(),
+        };
+        std::thread::Builder::new()
+            .name(format!("serial thread irq {}", irq))
+            .spawn(move || Self::input_loop(irq, irq_sender, in_data))
+            .unwrap();
+        r
+    }
+
+    fn input_loop(irq: u32, irq_sender: Sender<u32>, in_data: Arc<RwLock<VecDeque<u8>>>) {
+        make_stdin_raw();
+        loop {
+            let stdin = std::io::stdin();
+            let mut handle = stdin.lock();
+            let mut buf = [0u8];
+            handle.read_exact(&mut buf).unwrap();
+            in_data.write().unwrap().push_back(buf[0]);
+            irq_sender.send(irq).unwrap();
+        }
+    }
+
     pub fn read(&mut self, offset: u16) -> u8 {
         let result = match offset {
             0 => {
                 if self.lcr.dlab() == 0 {
-                    self.in_data.pop_front().unwrap_or({
-                        warn!("OS reads from serial port. no available bytes, return 0xff");
-                        0xff
-                    })
+                    let mut in_data = self.in_data.write().unwrap();
+                    in_data.pop_front().unwrap_or(0xff)
                 } else {
                     (self.divisor & 0xff) as u8
                 }
@@ -140,7 +182,7 @@ impl Serial {
                 }
             }
             2 => {
-                if self.in_data.len() > 0 {
+                if self.in_data.read().unwrap().len() > 0 {
                     DATA_AVAILABLE << 1
                 } else {
                     ROOM_AVAILABLE << 1
@@ -148,7 +190,16 @@ impl Serial {
             }
             3 => self.lcr.0,
             4 => self.mcr.0,
-            5 => self.lsr.0,
+            5 => {
+                let in_data_len = { self.in_data.read().unwrap().len() };
+                if in_data_len == 0 {
+                    self.lsr.set_ready(0);
+                } else {
+                    self.lsr.set_ready(1);
+                }
+                self.lsr.set_thre(1);
+                self.lsr.0
+            }
             6 => self.msr,
             7 => self.scr,
             _ => unreachable!("offset {}", offset),
@@ -162,7 +213,13 @@ impl Serial {
         match offset {
             0 => {
                 if self.lcr.dlab() == 0 {
-                    print!("{}", value as char)
+                    let stdout = std::io::stdout();
+                    let mut handle = stdout.lock();
+                    let num_char = handle.write(&[value]).unwrap();
+                    debug_assert_eq!(num_char, 1);
+                    let flush_ret = handle.flush().unwrap();
+                    debug_assert_eq!(flush_ret, ());
+                    self.irq_sender.send(self.irq).unwrap();
                 } else {
                     self.divisor &= !0xff;
                     self.divisor |= value as u16;
