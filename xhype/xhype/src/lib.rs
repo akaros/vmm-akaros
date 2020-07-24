@@ -256,7 +256,8 @@ impl GuestThread {
                 }
                 VMX_REASON_EPT_VIOLATION => {
                     let ept_gpa = vcpu.read_vmcs(VMCS_GUEST_PHYSICAL_ADDRESS)?;
-                    if cfg!(debug_assertions) {
+                    let ret = handle_ept_violation(vcpu, self, ept_gpa as usize)?;
+                    if cfg!(debug_assertions) && ret == HandleResult::Resume {
                         if ept_gpa == last_ept_gpa {
                             ept_count += 1;
                         } else {
@@ -272,7 +273,7 @@ impl GuestThread {
                             return Err((reason, err_msg))?;
                         }
                     }
-                    handle_ept_violation(vcpu, self, ept_gpa as usize)?
+                    ret
                 }
                 _ => {
                     let err_msg =

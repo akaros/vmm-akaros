@@ -110,3 +110,27 @@ impl IoApic {
     }
 }
 
+pub fn ioapic_access(
+    _vcpu: &VCPU,
+    gth: &mut GuestThread,
+    gpa: usize,
+    reg_val: &mut u64,
+    _size: u8,
+    store: bool,
+) -> Result<(), Error> {
+    let offset = gpa & 0xfffff;
+    if offset != 0 && offset != 0x10 {
+        error!(
+            "Bad register offset: {:x} and has to be 0x0 or 0x10",
+            offset
+        );
+        return Ok(());
+    }
+    let ioapic = &gth.vm.ioapic;
+    if store {
+        ioapic.write().unwrap().write(offset, *reg_val as u32);
+    } else {
+        *reg_val = ioapic.read().unwrap().read(offset) as u64;
+    }
+    Ok(())
+}
