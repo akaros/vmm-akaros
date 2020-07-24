@@ -29,3 +29,8 @@ pub const MSR_IA32_TSC: u32 = 0x00000010;
 pub const MSR_IA32_MISC_ENABLE: u32 = 0x000001a0;
 pub const MSR_IA32_BIOS_SIGN_ID: u32 = 0x0000008b;
 pub const MSR_IA32_CR_PAT: u32 = 0x00000277;
+
+pub const MSR_IA32_APIC_BASE: u32 = 0x0000001b;
+pub const MSR_IA32_APIC_BASE_ENABLED: u64 = 1 << 11;
+pub const MSR_IA32_APIC_BASE_X2: u64 = 1 << 10;
+pub const MSR_IA32_APIC_BASE_BSP: u64 = 1 << 8;
