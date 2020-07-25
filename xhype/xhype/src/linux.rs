@@ -317,7 +317,11 @@ pub fn load_linux64(
         CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE,
         0,
     );
-    let ctrl_cpu2 = gen_exec_ctrl(vmx_read_capability(VMXCap::CPU2)?, CPU_BASED2_RDTSCP, 0);
+    let ctrl_cpu2 = gen_exec_ctrl(
+        vmx_read_capability(VMXCap::CPU2)?,
+        CPU_BASED2_RDTSCP | CPU_BASED2_INVPCID,
+        0,
+    );
     let ctrl_entry = gen_exec_ctrl(vmx_read_capability(VMXCap::Entry)?, VMENTRY_GUEST_IA32E, 0);
     let cr0 = X86_CR0_NE | X86_CR0_PE | X86_CR0_PG;
     let cr4 = X86_CR4_VMXE | X86_CR4_PAE;
