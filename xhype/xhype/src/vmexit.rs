@@ -211,6 +211,39 @@ fn msr_unknown(
     }
 }
 
+// Table 24-14. Format of the VM-Entry Interruption-Information Field
+pub fn inject_exception(
+    vcpu: &VCPU,
+    vector: u8,
+    exception_type: u8,
+    code: Option<u32>,
+) -> Result<(), Error> {
+    if let Some(code) = code {
+        vcpu.write_vmcs(VMCS_CTRL_VMENTRY_EXC_ERROR, code as u64)?;
+        let info = 1 << 31 | vector as u64 | (exception_type as u64) << 8 | 1 << 11;
+        vcpu.write_vmcs(VMCS_CTRL_VMENTRY_IRQ_INFO, info)?;
+    } else {
+        let info = 1 << 31 | vector as u64 | (exception_type as u64) << 8;
+        vcpu.write_vmcs(VMCS_CTRL_VMENTRY_IRQ_INFO, info)?;
+    }
+    Ok(())
+}
+
+fn msr_gp(
+    vcpu: &VCPU,
+    _gth: &GuestThread,
+    new_value: Option<u64>,
+    msr: u32,
+) -> Result<HandleResult, Error> {
+    if let Some(v) = new_value {
+        error!("guest writes {:x} to unknown msr: {:08x}", v, msr);
+    } else {
+        error!("guest reads from unknown msr: {:08x}", msr);
+    }
+    inject_exception(vcpu, 13, 3, Some(0))?;
+    Ok(HandleResult::Resume)
+}
+
 fn msr_efer(
     vcpu: &VCPU,
     _gth: &GuestThread,
@@ -298,7 +331,7 @@ pub fn handle_msr_access(
         MSR_IA32_BIOS_SIGN_ID => msr_read_only(vcpu, gth, new_value, msr, 0),
         MSR_IA32_CR_PAT => msr_pat(vcpu, gth, new_value),
         MSR_IA32_APIC_BASE => msr_apicbase(vcpu, gth, new_value),
-        _ => msr_unknown(vcpu, gth, new_value, msr),
+        _ => msr_gp(vcpu, gth, new_value, msr),
     }
 }
 
