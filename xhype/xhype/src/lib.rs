@@ -29,7 +29,7 @@ use mach::{vm_self_region, MachVMBlock};
 use pci::PciBus;
 use rtc::Rtc;
 use serial::Serial;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     mpsc::{channel, Receiver, Sender},
     Arc, Mutex, RwLock,
@@ -66,6 +66,25 @@ impl Drop for VMManager {
 // VirtualMachine
 ////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug, Copy, Clone)]
+pub enum PortPolicy {
+    AllOne,
+    Random,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum MsrPolicy {
+    Random,
+    AllOne,
+    GP,
+}
+
+#[derive(Debug)]
+pub enum PolicyList<T> {
+    Apply(HashSet<T>),
+    Except(HashSet<T>),
+}
+
 /// A VirtualMachine is the physical hardware seen by a guest, including physical
 /// memory, number of cpu cores, etc.
 pub struct VirtualMachine {
@@ -83,6 +102,10 @@ pub struct VirtualMachine {
     pub(crate) vcpu_ids: Arc<RwLock<Vec<u32>>>,
     pub(crate) rtc: RwLock<Rtc>,
     pub pci_bus: Mutex<PciBus>,
+    pub port_list: PolicyList<u16>,
+    pub port_policy: PortPolicy,
+    pub msr_list: PolicyList<u32>,
+    pub msr_policy: MsrPolicy,
 }
 
 impl VirtualMachine {
@@ -103,6 +126,10 @@ impl VirtualMachine {
             vcpu_ids: vcpu_ids.clone(),
             rtc: RwLock::new(Rtc { reg: 0 }),
             vector_senders: vector_senders.clone(),
+            port_list: PolicyList::Except(HashSet::new()),
+            port_policy: PortPolicy::AllOne,
+            msr_list: PolicyList::Except(HashSet::new()),
+            msr_policy: MsrPolicy::GP,
         };
         vm.gpa2hva_map()?;
         // start a thread for IO APIC to collect interrupts
