@@ -457,8 +457,9 @@ pub fn handle_cpuid(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Erro
             // Set the hypervisor bit to let the guest know it is virtualized
             ecx |= CPUID_HV;
 
-            // unset monitor capability, vmx capability, and perf capability
-            ecx &= !(CPUID_MONITOR | CPUID_VMX | CPUID_PDCM);
+            // unset monitor capability, vmx capability, perf capability,
+            // and tsc deadline
+            ecx &= !(CPUID_MONITOR | CPUID_VMX | CPUID_PDCM | CPUID_TSC_DL);
 
             // unset osxsave if it is not supported or it is not turned on
             if ecx & CPUID_XSAVE == 0 || vcpu.read_reg(X86Reg::CR4)? & X86_CR4_OSXSAVE == 0 {
@@ -476,6 +477,14 @@ pub fn handle_cpuid(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Erro
             ebx = 0;
             ecx = 0;
             edx = 0;
+        }
+        0xd => {
+            if (vmx_read_capability(VMXCap::CPU2)? >> 32) & CPU_BASED2_XSAVES_XRSTORS == 0 {
+                eax = 0;
+                ebx = 0;
+                ecx = 0;
+                edx = 0;
+            }
         }
         0x4000_0000 => {
             // eax indicates the highest eax in Hypervisor leaf

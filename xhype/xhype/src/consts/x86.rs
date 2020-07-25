@@ -90,6 +90,7 @@ pub const CPUID_PDCM: u32 = 1 << 15;
 pub const CPUID_XSAVE: u32 = 1 << 26;
 pub const CPUID_OSXSAVE: u32 = 1 << 27;
 pub const CPUID_HV: u32 = 1 << 31;
+pub const CPUID_TSC_DL: u32 = 1 << 24;
 
 // eax = 0x7
 pub const CPUID_TSC_ADJUST: u32 = 1 << 1;
