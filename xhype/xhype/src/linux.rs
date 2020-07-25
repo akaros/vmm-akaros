@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::fs::{metadata, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::mem::{size_of, transmute, zeroed};
-use std::sync::Arc;
+use std::sync::{mpsc::channel, Arc};
 
 pub const E820_RAM: u32 = 1;
 pub const E820_RESERVED: u32 = 2;
@@ -359,8 +359,17 @@ pub fn load_linux64(
     }
     vm.map_guest_mem(mem_maps)?;
 
-    let mut guest_threads: Vec<GuestThread> =
-        (0..num_gth).map(|i| GuestThread::new(vm, i)).collect();
+    let mut guest_threads = Vec::with_capacity(num_gth as usize);
+    let mut vector_senders = Vec::with_capacity(num_gth as usize);
+
+    for i in 0..num_gth {
+        let (sender, receiver) = channel();
+        vector_senders.push(sender);
+        let mut gth = GuestThread::new(vm, i);
+        gth.vector_receiver = Some(receiver);
+        guest_threads.push(gth);
+    }
+    *vm.vector_senders.lock().unwrap() = Some(vector_senders);
 
     // guest thread 0 is the BSP, bootstrap processor
     guest_threads[0].init_regs = init_regs;

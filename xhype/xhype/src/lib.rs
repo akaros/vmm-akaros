@@ -31,7 +31,7 @@ use rtc::Rtc;
 use serial::Serial;
 use std::collections::HashMap;
 use std::sync::{
-    mpsc::{channel, Receiver},
+    mpsc::{channel, Receiver, Sender},
     Arc, Mutex, RwLock,
 };
 use vmexit::*;
@@ -79,6 +79,7 @@ pub struct VirtualMachine {
     // serial ports
     pub(crate) com1: RwLock<Serial>,
     pub(crate) ioapic: Arc<RwLock<IoApic>>,
+    pub(crate) vector_senders: Arc<Mutex<Option<Vec<Sender<u8>>>>>,
     pub(crate) vcpu_ids: Arc<RwLock<Vec<u32>>>,
     pub(crate) rtc: RwLock<Rtc>,
     pub pci_bus: Mutex<PciBus>,
@@ -101,6 +102,7 @@ impl VirtualMachine {
             ioapic: ioapic.clone(),
             vcpu_ids: vcpu_ids.clone(),
             rtc: RwLock::new(Rtc { reg: 0 }),
+            vector_senders: vector_senders.clone(),
         };
         vm.gpa2hva_map()?;
         // start a thread for IO APIC to collect interrupts
