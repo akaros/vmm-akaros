@@ -13,6 +13,10 @@ pub fn round_down_4k(num: usize) -> usize {
     num & !0xfff
 }
 
+pub fn make_stdin_raw() {
+    unsafe { make_stdin_raw_c() }
+}
+
 pub fn get_tsc_frequency() -> u64 {
     let mut size = size_of::<u64>();
     let mut tsc_freq = 0;
@@ -53,6 +57,7 @@ extern "C" {
     );
     fn mach_absolute_time() -> u64;
     fn mach_timebase(numer: *mut u32, denom: *mut u32) -> bool;
+    fn make_stdin_raw_c();
 }
 
 #[cfg(test)]

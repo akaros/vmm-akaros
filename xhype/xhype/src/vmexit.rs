@@ -355,11 +355,11 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
         }
         COM1_BASE..=COM1_MAX => {
             if qual.is_in() {
-                let v = gth.vm.com1.write().unwrap().read(port - COM1_BASE);
+                let v = gth.vm.com1.lock().unwrap().read(port - COM1_BASE);
                 vcpu.write_reg_16_low(X86Reg::RAX, v)?;
             } else {
                 let v = (rax & 0xff) as u8;
-                gth.vm.com1.write().unwrap().write(port - COM1_BASE, v);
+                gth.vm.com1.lock().unwrap().write(port - COM1_BASE, v);
             }
         }
         PCI_CONFIG_ADDR => {
