@@ -12,6 +12,7 @@ build = "build.rs"
 log = "0.4"
 bitfield = "0.13.2"
 chrono = "0.4"
+rand = "0.7.3"
 
 
 [build-dependencies]

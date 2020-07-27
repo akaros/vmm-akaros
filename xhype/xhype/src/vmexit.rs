@@ -10,7 +10,7 @@ use crate::hv::vmx::*;
 use crate::hv::X86Reg;
 use crate::hv::{vmx_read_capability, VMXCap};
 use crate::ioapic::ioapic_access;
-use crate::{GuestThread, VCPU};
+use crate::{GuestThread, MsrPolicy, PolicyList, PortPolicy, VCPU};
 #[allow(unused_imports)]
 use log::*;
 use std::mem::size_of;
@@ -195,7 +195,6 @@ fn write_msr_to_reg(msr_value: u64, vcpu: &VCPU) -> Result<(), Error> {
     vcpu.write_reg(X86Reg::RDX, new_edx)
 }
 
-// TODO: A real CPU will generate #GP if an unknown MSR is accessed.
 fn msr_unknown(
     _vcpu: &VCPU,
     _gth: &GuestThread,
@@ -229,19 +228,43 @@ pub fn inject_exception(
     Ok(())
 }
 
-fn msr_gp(
+fn msr_apply_policy(
     vcpu: &VCPU,
-    _gth: &GuestThread,
+    gth: &GuestThread,
     new_value: Option<u64>,
     msr: u32,
 ) -> Result<HandleResult, Error> {
     if let Some(v) = new_value {
-        error!("guest writes {:x} to unknown msr: {:08x}", v, msr);
-    } else {
-        error!("guest reads from unknown msr: {:08x}", msr);
+        warn!("guest writes {:x} to unknown msr: {:08x}", v, msr);
     }
-    inject_exception(vcpu, 13, 3, Some(0))?;
-    Ok(HandleResult::Resume)
+    match gth.vm.msr_policy {
+        MsrPolicy::GP => {
+            inject_exception(vcpu, 13, 3, Some(0))?;
+            Ok(HandleResult::Resume)
+        }
+        MsrPolicy::AllOne => {
+            if new_value.is_none() {
+                warn!(
+                    "guest reads from unknown msr: {:08x}, return 0x{:x}",
+                    msr,
+                    u64::MAX
+                );
+                write_msr_to_reg(u64::MAX, vcpu)?;
+            }
+            Ok(HandleResult::Next)
+        }
+        MsrPolicy::Random => {
+            if new_value.is_none() {
+                let v = rand::random();
+                warn!(
+                    "guest reads from unknown msr: {:08x}, return 0x{:x}",
+                    msr, v
+                );
+                write_msr_to_reg(v, vcpu)?;
+            }
+            Ok(HandleResult::Next)
+        }
+    }
 }
 
 fn msr_efer(
@@ -331,7 +354,22 @@ pub fn handle_msr_access(
         MSR_IA32_BIOS_SIGN_ID => msr_read_only(vcpu, gth, new_value, msr, 0),
         MSR_IA32_CR_PAT => msr_pat(vcpu, gth, new_value),
         MSR_IA32_APIC_BASE => msr_apicbase(vcpu, gth, new_value),
-        _ => msr_gp(vcpu, gth, new_value, msr),
+        _ => match &gth.vm.msr_list {
+            PolicyList::Apply(set) => {
+                if set.contains(&msr) {
+                    msr_apply_policy(vcpu, gth, new_value, msr)
+                } else {
+                    msr_unknown(vcpu, gth, new_value, msr)
+                }
+            }
+            PolicyList::Except(set) => {
+                if !set.contains(&msr) {
+                    msr_apply_policy(vcpu, gth, new_value, msr)
+                } else {
+                    msr_unknown(vcpu, gth, new_value, msr)
+                }
+            }
+        },
     }
 }
 
@@ -342,8 +380,8 @@ pub fn handle_msr_access(
 struct ExitQualIO(u64);
 
 impl ExitQualIO {
-    pub fn size(&self) -> u64 {
-        (self.0 & 0b111) + 1 // Vol.3, table 27-5
+    pub fn size(&self) -> u8 {
+        ((self.0 & 0b111) + 1) as u8 // Vol.3, table 27-5
     }
 
     pub fn is_in(&self) -> bool {
@@ -364,6 +402,50 @@ const COM1_MAX: u16 = 0x3ff;
 
 const RTC_PORT_REG: u16 = 0x70;
 const RTC_PORT_DATA: u16 = 0x71;
+
+fn port_apply_policy(
+    vcpu: &VCPU,
+    gth: &GuestThread,
+    data_in: Option<u64>,
+    size: u8,
+    port: u16,
+) -> Result<(), Error> {
+    if let Some(v) = data_in {
+        warn!("guest writes 0x{:x?} to unknown port: 0x{:x}", v, port);
+    } else {
+        let ret = match gth.vm.port_policy {
+            PortPolicy::AllOne => u64::MAX,
+            PortPolicy::Random => rand::random(),
+        };
+        match size {
+            1 => vcpu.write_reg_16_low(X86Reg::RAX, (ret & 0xff) as u8)?,
+            2 => vcpu.write_reg_16(X86Reg::RAX, (ret & 0xffff) as u16)?,
+            4 => vcpu.write_reg(X86Reg::RAX, ret & 0xffffffff)?,
+            _ => unreachable!(),
+        }
+        warn!(
+            "guest reads from unknown port: 0x{:x}, return 0x{:x}",
+            port, ret
+        );
+    }
+    Ok(())
+}
+
+fn port_unknown(
+    _vcpu: &VCPU,
+    _gth: &GuestThread,
+    data_in: Option<u64>,
+    _size: u8,
+    port: u16,
+) -> Result<HandleResult, Error> {
+    let err_msg = if let Some(v) = data_in {
+        format!("guest writes 0x{:x?} to unknown port: 0x{:x}", v, port)
+    } else {
+        format!("guest reads from unknown port: 0x{:x}", port)
+    };
+    error!("{}", &err_msg);
+    Err(Error::Unhandled(VMX_REASON_IO, err_msg))
+}
 
 pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> {
     let qual = ExitQualIO(vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?);
@@ -426,7 +508,34 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
                 }
             }
         }
-        _ => return Err((VMX_REASON_IO, format!("cannot handle IO port 0x{:x}", port)))?,
+        _ => {
+            let data_in = if qual.is_in() {
+                match size {
+                    1 => Some(rax & 0xff),
+                    2 => Some(rax & 0xffff),
+                    4 => Some(rax & 0xffffffff),
+                    _ => unreachable!(),
+                }
+            } else {
+                None
+            };
+            match &gth.vm.port_list {
+                PolicyList::Apply(set) => {
+                    if set.contains(&port) {
+                        port_apply_policy(vcpu, gth, data_in, size, port)?;
+                    } else {
+                        port_unknown(vcpu, gth, data_in, size, port)?;
+                    }
+                }
+                PolicyList::Except(set) => {
+                    if !set.contains(&port) {
+                        port_apply_policy(vcpu, gth, data_in, size, port)?;
+                    } else {
+                        port_unknown(vcpu, gth, data_in, size, port)?;
+                    }
+                }
+            }
+        }
     }
     Ok(HandleResult::Next)
 }
