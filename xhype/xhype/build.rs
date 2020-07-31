@@ -7,6 +7,11 @@ fn main() {
     cc::Build::new()
         .file("c_src/serial_c.c")
         .compile("serial_c");
+    cc::Build::new()
+        .file("c_src/vmnet.m")
+        .compile("virtio-vmnet");
 
     println!("cargo:rustc-link-lib=framework=Hypervisor");
+    println!("cargo:rustc-link-lib=framework=Cocoa");
+    println!("cargo:rustc-link-lib=framework=vmnet");
 }
