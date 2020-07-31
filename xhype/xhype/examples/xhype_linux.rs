@@ -55,6 +55,7 @@ use std::fs::File;
 use std::sync::Arc;
 use xhype::consts::*;
 use xhype::err::Error;
+use xhype::virtio::VirtioDevice;
 use xhype::{linux, MsrPolicy, PolicyList, PortPolicy, VMManager};
 
 fn boot_linux() {
@@ -108,6 +109,12 @@ fn boot_linux() {
     let rd_path = env::var("RD_PATH").ok();
     let cmd_line = env::var("CMD_Line").unwrap_or("auto".to_string());
     let mut vm = vmm.create_vm(1, low_mem_size).unwrap();
+    vm.add_virtio_mmio_device(VirtioDevice::new_vmnet(
+        "virtio-vmnet".to_string(),
+        0,
+        vm.irq_sender.clone(),
+        vm.gpa2hva.clone(),
+    ));
     vm.port_list = port_list;
     vm.port_policy = port_policy;
     vm.msr_list = msr_list;

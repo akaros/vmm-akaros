@@ -142,7 +142,7 @@ pub fn load_linux64(
     vm: &Arc<VirtualMachine>,
     kernel_path: String,
     rd_path: Option<String>,
-    cmd_line: String,
+    mut cmd_line: String,
     mem_size: usize,
 ) -> Result<Vec<GuestThread>, Error> {
     let kn_meta = metadata(&kernel_path)?;
@@ -193,6 +193,16 @@ pub fn load_linux64(
         setup_bios_tables(0xe0000, &mut low_mem, num_gth);
     } else {
         return Err("Linux requires low memory".to_string())?;
+    }
+
+    // command line
+    for virtio_dev in vm.virtio_mmio_devices.iter() {
+        let mmio_dev = virtio_dev.lock().unwrap();
+        let virtio_para = format!(
+            " virtio_mmio.device=1K@0x{:x}:{}",
+            mmio_dev.addr, mmio_dev.dev.irq
+        );
+        cmd_line.push_str(&virtio_para);
     }
 
     // calculate offsets

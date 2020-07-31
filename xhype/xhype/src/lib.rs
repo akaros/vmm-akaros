@@ -19,6 +19,7 @@ pub mod vthread;
 
 use apic::Apic;
 use consts::x86::*;
+use consts::*;
 use crossbeam_channel::unbounded as channel;
 use crossbeam_channel::{Receiver, Sender};
 use err::Error;
@@ -34,8 +35,8 @@ use rtc::Rtc;
 use serial::Serial;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
+use virtio::{mmio::VirtioMmioDev, VirtioDevice};
 use vmexit::*;
-
 ////////////////////////////////////////////////////////////////////////////////
 // VMManager
 ////////////////////////////////////////////////////////////////////////////////
@@ -98,6 +99,7 @@ pub struct VirtualMachine {
     cores: u32,
     pub(crate) low_mem: Option<RwLock<MachVMBlock>>, // memory below 4GiB
     pub(crate) high_mem: RwLock<Vec<MachVMBlock>>,
+    pub(crate) virtio_mmio_devices: Vec<Mutex<VirtioMmioDev>>,
     // serial ports
     pub(crate) com1: Mutex<Serial>,
     pub(crate) ioapic: Arc<RwLock<IoApic>>,
@@ -110,6 +112,8 @@ pub struct VirtualMachine {
     pub msr_list: PolicyList<u32>,
     pub msr_policy: MsrPolicy,
     pub gpa2hva: AddressConverter,
+    pub irq_sender: Sender<u32>,
+    pub virtio_base: usize,
 }
 
 impl VirtualMachine {
@@ -122,6 +126,7 @@ impl VirtualMachine {
         let vcpu_ids = Arc::new(RwLock::new(vec![u32::MAX; cores as usize]));
         let mut mem_space = MemSpace::create()?;
         Self::map_host_mem(&mut mem_space)?;
+        let virtio_base;
         let (low_mem, gpa2hva): (_, AddressConverter) = if let Some(size) = low_mem_size {
             let low_mem_block = MachVMBlock::new(size)?;
             mem_space.map(
@@ -138,11 +143,13 @@ impl VirtualMachine {
                     gpa as usize
                 }
             };
+            virtio_base = std::cmp::max(GiB, size);
             (
                 Some(RwLock::new(low_mem_block)),
                 Arc::new(Box::new(converter)),
             )
         } else {
+            virtio_base = GiB; // just use the 1 GiB address as virtio base
             let converter = |gpa: u64| gpa as usize;
             (None, Arc::new(Box::new(converter)))
         };
@@ -159,9 +166,12 @@ impl VirtualMachine {
             port_policy: PortPolicy::AllOne,
             msr_list: PolicyList::Except(HashSet::new()),
             msr_policy: MsrPolicy::GP,
+            virtio_mmio_devices: Vec::new(),
             gpa2hva,
+            irq_sender: irq_sender,
             low_mem,
             high_mem: RwLock::new(vec![]),
+            virtio_base,
         };
         // start a thread for IO APIC to collect interrupts
         std::thread::Builder::new()
@@ -195,6 +205,14 @@ impl VirtualMachine {
         let hva = (self.gpa2hva)(gpa);
         let ptr = (hva + index as usize * std::mem::size_of::<T>()) as *const T;
         &*ptr
+    }
+
+    pub fn add_virtio_mmio_device(&mut self, dev: VirtioDevice) {
+        let mmio_dev = VirtioMmioDev {
+            dev,
+            addr: self.virtio_base + self.virtio_mmio_devices.len() * PAGE_SIZE,
+        };
+        self.virtio_mmio_devices.push(Mutex::new(mmio_dev));
     }
 }
 
