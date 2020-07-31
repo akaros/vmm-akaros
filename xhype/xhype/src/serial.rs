@@ -4,11 +4,11 @@
 
 use crate::utils::make_stdin_raw;
 use bitfield::bitfield;
+use crossbeam_channel::Sender;
 use log::*;
 use std::collections::VecDeque;
 use std::io::Read;
 use std::io::Write;
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 
 // offset 0x1, Interrupt Enable Register (IER)
