@@ -141,6 +141,10 @@ pub fn handle_cr(vcpu: &VCPU, _gth: &GuestThread) -> Result<HandleResult, Error>
                     new_value |= X86_CR0_NE;
                     vcpu.write_vmcs(VMCS_CTRL_CR0_SHADOW, new_value)?;
                 }
+                X86Reg::CR4 => {
+                    new_value |= X86_CR4_VMXE;
+                    vcpu.write_vmcs(VMCS_CTRL_CR4_SHADOW, new_value & !X86_CR4_VMXE)?;
+                }
                 _ => {
                     return Err(Error::Unhandled(
                         VMX_REASON_MOV_CR,
