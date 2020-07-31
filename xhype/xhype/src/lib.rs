@@ -13,6 +13,7 @@ pub mod pci;
 pub mod rtc;
 pub mod serial;
 pub mod utils;
+pub mod virtio;
 pub mod vmexit;
 pub mod vthread;
 
