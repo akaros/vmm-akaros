@@ -4,6 +4,7 @@ use crate::consts::msr::*;
 use crate::consts::x86::*;
 use crate::err::Error;
 use crate::hlt;
+use crate::hv::ffi::*;
 use crate::hv::vmx::*;
 use crate::hv::{gen_exec_ctrl, vmx_read_capability, VMXCap};
 use crate::mach::MachVMBlock;
@@ -78,10 +79,24 @@ impl VThread {
         ]
         .into_iter()
         .collect();
-        let mem_maps = vec![(vthread_stack.start, vthread_stack), (paging.start, paging)]
-            .into_iter()
-            .collect();
-        vm.map_guest_mem(mem_maps)?;
+        {
+            let mut mem_space = vm.mem_space.write().unwrap();
+            let mut high_mem = vm.high_mem.write().unwrap();
+            mem_space.map(
+                paging.start,
+                paging.start,
+                paging.size,
+                HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
+            )?;
+            mem_space.map(
+                vthread_stack.start,
+                vthread_stack.start,
+                vthread_stack.size,
+                HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
+            )?;
+            high_mem.push(paging);
+            high_mem.push(vthread_stack);
+        }
         let mut gth = GuestThread::new(vm, 0);
         gth.init_regs = init_regs;
         gth.init_vmcs = init_vmcs;
@@ -150,7 +165,7 @@ pub fn spawn(vm: &Arc<VirtualMachine>, f: fn() -> ()) -> JoinHandle<()> {
 #[cfg(test)]
 mod tests {
     use crate::{vthread, VMManager};
-    use std::sync::{Arc, RwLock};
+    use std::sync::Arc;
 
     static mut NUM_A: i32 = 1;
     static mut NUM_B: i32 = 2;
@@ -170,7 +185,7 @@ mod tests {
         let original_a = unsafe { NUM_A };
         let original_b = unsafe { NUM_B };
         let vmm = VMManager::new().unwrap();
-        let vm = Arc::new(vmm.create_vm(1).unwrap());
+        let vm = Arc::new(vmm.create_vm(1, None).unwrap());
         let handle1 = vthread::spawn(&vm, double_a);
         let handle2 = vthread::spawn(&vm, decrement_b);
         handle1.join().unwrap();

@@ -13,7 +13,6 @@ use crate::ioapic::ioapic_access;
 use crate::{GuestThread, MsrPolicy, PolicyList, PortPolicy, VCPU};
 #[allow(unused_imports)]
 use log::*;
-use std::mem::size_of;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum HandleResult {
@@ -47,14 +46,6 @@ pub fn vmx_guest_reg(num: u64) -> X86Reg {
 }
 
 const ADDR_MASK: u64 = 0xffffffffffff;
-// Fix me!
-// this function is extremely unsafe. The purpose is to read from guest's memory,
-// since the high memory address of the guest are the same as the host, we just
-// directly read the host's memory.
-fn read_guest_mem<T>(base: u64, index: u64) -> T {
-    let ptr = (base + index * size_of::<T>() as u64) as *const T;
-    unsafe { ptr.read() }
-}
 
 fn pt_index(addr: u64) -> u64 {
     (addr >> 12) & 0x1ff
@@ -72,29 +63,41 @@ fn pml4_index(addr: u64) -> u64 {
     (addr >> 39) & 0x1ff
 }
 
-pub fn emulate_paging(vcpu: &VCPU, linear_addr: u64) -> Result<u64, Error> {
+pub(crate) unsafe fn emulate_paging(
+    vcpu: &VCPU,
+    gth: &GuestThread,
+    linear_addr: u64,
+) -> Result<u64, Error> {
     let cr0 = vcpu.read_reg(X86Reg::CR0)?;
     if cr0 & X86_CR0_PG == 0 {
         return Ok(linear_addr);
     }
     let cr3 = vcpu.read_reg(X86Reg::CR3)?;
-    let pml4e: u64 = read_guest_mem((cr3 & !0xfff) & ADDR_MASK, pml4_index(linear_addr));
+    let pml4e: u64 = *gth
+        .vm
+        .read_guest_mem((cr3 & !0xfff) & ADDR_MASK, pml4_index(linear_addr));
     if pml4e & PG_P == 0 {
         return Err("emulate_paging: page fault at pml4e".to_string())?;
     }
-    let pdpte: u64 = read_guest_mem((pml4e & !0xfff) & ADDR_MASK, pdpt_index(linear_addr));
+    let pdpte: u64 = *gth
+        .vm
+        .read_guest_mem((pml4e & !0xfff) & ADDR_MASK, pdpt_index(linear_addr));
     if pdpte & PG_P == 0 {
         return Err("emulate_paging: page fault at pdpte".to_string())?;
     } else if pdpte & PG_PS > 0 {
         return Ok((pdpte & !0x3fffffff) | (linear_addr & 0x3fffffff));
     }
-    let pde: u64 = read_guest_mem((pdpte & !0xfff) & ADDR_MASK, pd_index(linear_addr));
+    let pde: u64 = *gth
+        .vm
+        .read_guest_mem((pdpte & !0xfff) & ADDR_MASK, pd_index(linear_addr));
     if pde & PG_P == 0 {
         return Err("emulate_paging: page fault at pde".to_string())?;
     } else if pde & PG_PS > 0 {
         return Ok((pde & !0x1fffff) | (linear_addr & 0x1fffff));
     }
-    let pte: u64 = read_guest_mem((pde & !0xfff) & ADDR_MASK, pt_index(linear_addr));
+    let pte: u64 = *gth
+        .vm
+        .read_guest_mem((pde & !0xfff) & ADDR_MASK, pt_index(linear_addr));
     if pte & PG_P == 0 {
         return Err("emulate_paging: page fault at pte".to_string())?;
     } else {
@@ -102,11 +105,13 @@ pub fn emulate_paging(vcpu: &VCPU, linear_addr: u64) -> Result<u64, Error> {
     }
 }
 
-pub fn get_vmexit_instr(vcpu: &VCPU) -> Result<Vec<u8>, Error> {
+pub fn get_vmexit_instr(vcpu: &VCPU, gth: &GuestThread) -> Result<Vec<u8>, Error> {
     let len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
     let rip_v = vcpu.read_vmcs(VMCS_GUEST_RIP)?;
-    let rip = emulate_paging(&vcpu, rip_v)?;
-    Ok((0..len).map(|i| read_guest_mem::<u8>(rip, i)).collect())
+    let rip_gpa = unsafe { emulate_paging(vcpu, gth, rip_v)? };
+    Ok((0..len)
+        .map(|i| unsafe { *gth.vm.read_guest_mem::<u8>(rip_gpa, i) })
+        .collect())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -571,11 +576,11 @@ pub fn handle_ept_violation(
 ) -> Result<HandleResult, Error> {
     let apic_base = gth.apic.msr_apic_base as usize & !0xfff;
     if (gpa & !0xfff) == apic_base {
-        let insn = get_vmexit_instr(vcpu)?;
+        let insn = get_vmexit_instr(vcpu, gth)?;
         emulate_mem_insn(vcpu, gth, &insn, apic_access, gpa).unwrap();
         return Ok(HandleResult::Next);
     } else if (gpa & !0xfff) == IO_APIC_BASE {
-        let insn = get_vmexit_instr(vcpu)?;
+        let insn = get_vmexit_instr(vcpu, gth)?;
         emulate_mem_insn(vcpu, gth, &insn, ioapic_access, gpa)?;
         return Ok(HandleResult::Next);
     }

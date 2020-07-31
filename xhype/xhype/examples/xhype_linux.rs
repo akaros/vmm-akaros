@@ -51,8 +51,9 @@ kill the program. So to kill it, run `killall xhype_linux` in another terminal.
 use simplelog::{Config, LevelFilter, WriteLogger};
 use std::collections::HashSet;
 use std::env;
-use std::sync::Arc;
 use std::fs::File;
+use std::sync::Arc;
+use xhype::consts::*;
 use xhype::err::Error;
 use xhype::{linux, MsrPolicy, PolicyList, PortPolicy, VMManager};
 
@@ -100,12 +101,13 @@ fn boot_linux() {
             }
         }
     }
-    let memory_size = 1 << 30; // 1GB
+    let low_mem_size = Some(100 * MiB);
+    let memory_size = 1 * GiB;
     let vmm = VMManager::new().unwrap();
     let kn_path = env::var("KN_PATH").unwrap();
     let rd_path = env::var("RD_PATH").ok();
     let cmd_line = env::var("CMD_Line").unwrap_or("auto".to_string());
-    let mut vm = vmm.create_vm(1).unwrap();
+    let mut vm = vmm.create_vm(1, low_mem_size).unwrap();
     vm.port_list = port_list;
     vm.port_policy = port_policy;
     vm.msr_list = msr_list;
