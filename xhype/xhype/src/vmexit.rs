@@ -10,6 +10,7 @@ use crate::hv::vmx::*;
 use crate::hv::X86Reg;
 use crate::hv::{vmx_read_capability, VMXCap};
 use crate::ioapic::ioapic_access;
+use crate::virtio::mmio::virtio_mmio;
 use crate::{GuestThread, MsrPolicy, PolicyList, PortPolicy, VCPU};
 #[allow(unused_imports)]
 use log::*;
@@ -583,6 +584,18 @@ pub fn handle_ept_violation(
         let insn = get_vmexit_instr(vcpu, gth)?;
         emulate_mem_insn(vcpu, gth, &insn, ioapic_access, gpa)?;
         return Ok(HandleResult::Next);
+    } else {
+        let virtio_start = gth.vm.virtio_base;
+        if gpa >= virtio_start && gpa - virtio_start < PAGE_SIZE * gth.vm.virtio_mmio_devices.len()
+        {
+            let insn = get_vmexit_instr(vcpu, gth)?;
+            let r = emulate_mem_insn(vcpu, gth, &insn, virtio_mmio, gpa);
+            if r.is_err() {
+                vcpu.dump()?;
+                return Err(r.unwrap_err());
+            }
+            return Ok(HandleResult::Next);
+        }
     }
     Ok(HandleResult::Resume)
 }

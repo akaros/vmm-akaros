@@ -464,3 +464,39 @@ fn set_u64_high(num: &mut u64, value: u32) {
     *num &= 0xffffffff;
     *num |= (value as u64) << 32;
 }
+
+pub fn virtio_mmio(
+    _vcpu: &VCPU,
+    gth: &mut GuestThread,
+    gpa: usize,
+    reg_val: &mut u64,
+    size: u8,
+    store: bool,
+) -> Result<(), Error> {
+    let mask = match size {
+        1 => 0xff,
+        2 => 0xffff,
+        4 => 0xffffffff,
+        _ => unreachable!(),
+    };
+    let dev_index = (gpa - gth.vm.virtio_base) >> 12;
+    if store {
+        let mut dev = gth.vm.virtio_mmio_devices[dev_index].lock().unwrap();
+        debug!(
+            "virtio-mmio: store 0x{:x} to gpa = 0x{:x}, size = {}",
+            *reg_val & mask,
+            gpa,
+            size
+        );
+        virtio_mmio_write(&mut *dev, gpa, size, *reg_val as u32)
+    } else {
+        let dev = &gth.vm.virtio_mmio_devices[dev_index].lock().unwrap();
+        let val = virtio_mmio_read(dev, gpa, size);
+        debug!(
+            "virtio-mmio: read from gpa = 0x{:x}, size = {}, return {:x}",
+            gpa, size, val
+        );
+        *reg_val = val as u64;
+    }
+    Ok(())
+}
