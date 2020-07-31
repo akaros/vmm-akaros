@@ -15,7 +15,7 @@ chrono = "0.4"
 rand = "0.7.3"
 
 [dev-dependencies]
-env_logger = "0.7.1"
+simplelog = "0.8.0"
 
 [[example]]
 name = "xhype_linux"

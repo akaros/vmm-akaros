@@ -6,10 +6,11 @@ This example shows how to use xhype to boot Linux.
 Necessary environment variables:
     KN_PATH:    complete path to Linux kernel image,
     CMD_Line:   Linux kernel command line,
+    LOG_FILE:   path to log file
 
 Optional environment variables:
     RD_PATH:    complete path to a ramdisk file
-    RUST_LOG:   xhype log level: trace, debug, info, warn, error, none
+    LOG_LEVEL:   xhype log level: trace, debug, info, warn, error, none
     XHYPE_UNKNOWN_PORT: policy regarding guests' access to unknown IO ports
     XHYPE_UNKNOWN_MSR: policy regarding guests' access to unknown MSRs
 
@@ -45,13 +46,13 @@ To run this example, in the crate root directory, run
 Suggestions:
 1. Currently xhype will make stdin into a raw IO path, that means `ctrl-C` cannot
 kill the program. So to kill it, run `killall xhype_linux` in another terminal.
-2. The output of Linux and the log of xhype might mix together. So it is suggested
-to set `RUST_LOG=none`.
 !*/
 
+use simplelog::{Config, LevelFilter, WriteLogger};
 use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
+use std::fs::File;
 use xhype::err::Error;
 use xhype::{linux, MsrPolicy, PolicyList, PortPolicy, VMManager};
 
@@ -127,6 +128,18 @@ fn boot_linux() {
 }
 
 fn main() {
-    env_logger::init();
+    let loglevel = match std::env::var("LOG_LEVEL").unwrap_or_default().as_ref() {
+        "off" | "none" => LevelFilter::Off,
+        "error" => LevelFilter::Error,
+        "warn" => LevelFilter::Warn,
+        "info" => LevelFilter::Info,
+        "debug" => LevelFilter::Debug,
+        "trace" => LevelFilter::Trace,
+        _ => LevelFilter::Error,
+    };
+    if loglevel != LevelFilter::Off {
+        let log_file = std::env::var("LOG_FILE").expect("no log file path provided");
+        WriteLogger::init(loglevel, Config::default(), File::create(log_file).unwrap()).unwrap();
+    }
     boot_linux();
 }
