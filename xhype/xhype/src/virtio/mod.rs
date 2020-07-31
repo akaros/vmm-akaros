@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
 pub mod mmio;
+pub mod net;
 pub mod virtq;
 
 use crate::AddressConverter;
