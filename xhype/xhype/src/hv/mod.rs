@@ -296,6 +296,16 @@ impl VCPU {
             "VMCS_GUEST_SS_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_SS_BASE)?
         );
+        println!("VMCS_GUEST_TR: {:x}", self.read_vmcs(VMCS_GUEST_TR)?);
+        println!(
+            "VMCS_GUEST_TR_LIMIT: {:x}",
+            self.read_vmcs(VMCS_GUEST_TR_LIMIT)?
+        );
+        println!("VMCS_GUEST_TR_AR: {:x}", self.read_vmcs(VMCS_GUEST_TR_AR)?);
+        println!(
+            "VMCS_GUEST_TR_BASE: {:x}",
+            self.read_vmcs(VMCS_GUEST_TR_BASE)?
+        );
         println!("VMCS_GUEST_LDTR: {:x}", self.read_vmcs(VMCS_GUEST_LDTR)?);
         println!(
             "VMCS_GUEST_LDTR_LIMIT: {:x}",
