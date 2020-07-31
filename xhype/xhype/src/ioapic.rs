@@ -5,12 +5,10 @@
 use crate::err::Error;
 use crate::hv::interrupt_vcpu;
 use crate::{GuestThread, VCPU};
+use crossbeam_channel::{Receiver, Sender};
 #[allow(unused_imports)]
 use log::*;
-use std::sync::{
-    mpsc::{Receiver, Sender},
-    Arc, Mutex, RwLock,
-};
+use std::sync::{Arc, Mutex, RwLock};
 
 const IOAPIC_NUM_PINS: u32 = 24;
 const IOAPIC_REG_MAX: u32 = 0x10 + 2 * IOAPIC_NUM_PINS - 1;

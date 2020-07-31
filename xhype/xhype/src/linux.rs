@@ -10,13 +10,14 @@ use crate::hv::*;
 use crate::mach::MachVMBlock;
 use crate::utils::round_up_4k;
 use crate::{GuestThread, VirtualMachine};
+use crossbeam_channel::unbounded as channel;
 #[allow(unused_imports)]
 use log::*;
 use std::collections::HashMap;
 use std::fs::{metadata, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::mem::{size_of, transmute, zeroed};
-use std::sync::{mpsc::channel, Arc};
+use std::sync::Arc;
 
 pub const E820_RAM: u32 = 1;
 pub const E820_RESERVED: u32 = 2;

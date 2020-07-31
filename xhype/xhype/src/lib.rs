@@ -18,6 +18,8 @@ pub mod vthread;
 
 use apic::Apic;
 use consts::x86::*;
+use crossbeam_channel::unbounded as channel;
+use crossbeam_channel::{Receiver, Sender};
 use err::Error;
 use hv::ffi::{HV_MEMORY_EXEC, HV_MEMORY_READ, HV_MEMORY_WRITE};
 use hv::vmx::*;
@@ -30,10 +32,7 @@ use pci::PciBus;
 use rtc::Rtc;
 use serial::Serial;
 use std::collections::{HashMap, HashSet};
-use std::sync::{
-    mpsc::{channel, Receiver, Sender},
-    Arc, Mutex, RwLock,
-};
+use std::sync::{Arc, Mutex, RwLock};
 use vmexit::*;
 
 ////////////////////////////////////////////////////////////////////////////////
