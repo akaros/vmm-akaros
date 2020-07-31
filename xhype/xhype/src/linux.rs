@@ -5,6 +5,7 @@ use crate::consts::msr::*;
 use crate::consts::x86::*;
 use crate::consts::*;
 use crate::err::Error;
+use crate::hv::ffi::*;
 use crate::hv::vmx::*;
 use crate::hv::*;
 use crate::mach::MachVMBlock;
@@ -13,7 +14,6 @@ use crate::{GuestThread, VirtualMachine};
 use crossbeam_channel::unbounded as channel;
 #[allow(unused_imports)]
 use log::*;
-use std::collections::HashMap;
 use std::fs::{metadata, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::mem::{size_of, transmute, zeroed};
@@ -128,9 +128,8 @@ const MAGIC_AA55: u16 = 0xaa55;
 const HEADER_OFFSET: u64 = 0x01f1;
 const ENTRY_64: usize = 0x200;
 
-const LOW64K: usize = 64 * KiB;
-const LOW_MEM_SIZE: usize = 1 * MiB;
-const RD_BASE: usize = 16 * MiB;
+const LOW_MEM_64K: usize = 64 * KiB;
+const LOW_MEM_1M: usize = 1 * MiB;
 
 const XLF_KERNEL_64: u16 = 1 << 0;
 const XLF_CAN_BE_LOADED_ABOVE_4G: u16 = 1 << 1;
@@ -185,11 +184,16 @@ pub fn load_linux64(
         return Err("kernel is not relocatable".to_string())?;
     }
 
-    // setup low memory
-    let mut low_mem = MachVMBlock::new(LOW_MEM_SIZE)?;
-
     let num_gth = vm.cores;
-    setup_bios_tables(0xe0000, &mut low_mem, num_gth);
+    // setup low memory
+    let mut low_mem; // = vm.low_mem.as_ref().unwrap().write().unwrap();
+    if let Some(mem) = vm.low_mem.as_ref() {
+        low_mem = mem.write().unwrap();
+        // let mut mem = low_mem.write().unwrap();
+        setup_bios_tables(0xe0000, &mut low_mem, num_gth);
+    } else {
+        return Err("Linux requires low memory".to_string())?;
+    }
 
     // calculate offsets
     let bp_offset = mem_size - PAGE_SIZE;
@@ -223,23 +227,24 @@ pub fn load_linux64(
     bp.ext_cmd_line_ptr = (cmd_line_base >> 32) as u32;
 
     // load ramdisk
-    let rd_size;
-    let rd_mem;
     if let Some(rd_path) = rd_path {
         let rd_meta = metadata(&rd_path)?;
+        let rd_size = rd_meta.len() as usize;
+        if rd_size > low_mem.size - LOW_MEM_1M {
+            return Err(format!(
+                "size of ramdisk file {} is too large, limit: {} MiB.",
+                &rd_path,
+                low_mem.size / MiB - 1,
+            ))?;
+        }
         let mut rd_file = File::open(&rd_path)?;
-        rd_size = rd_meta.len() as usize;
-        let mut rd_mem_block = MachVMBlock::new(round_up_4k(rd_size))?;
-        rd_file.read_exact(&mut rd_mem_block[0..rd_size])?;
-        bp.hdr.ramdisk_image = (RD_BASE & 0xffffffff) as u32;
-        bp.ext_ramdisk_image = (RD_BASE >> 32) as u32;
+        let rd_base = low_mem.size - round_up_4k(rd_size);
+        rd_file.read_exact(&mut low_mem[rd_base..(rd_base + rd_size)])?;
+        bp.hdr.ramdisk_image = (rd_base & 0xffffffff) as u32;
+        bp.ext_ramdisk_image = (rd_base >> 32) as u32;
         bp.hdr.ramdisk_size = (rd_size & 0xffffffff) as u32;
         bp.ext_ramdisk_size = (rd_size >> 32) as u32;
         bp.hdr.root_dev = 0x100;
-        rd_mem = Some(rd_mem_block);
-    } else {
-        rd_size = 0;
-        rd_mem = None;
     }
 
     // setup e820 tables
@@ -253,14 +258,20 @@ pub fn load_linux64(
     // a tiny bit of low memory for trampoline
     let entry_low = E820Entry {
         addr: PAGE_SIZE as u64,
-        size: (LOW64K - PAGE_SIZE) as u64,
+        size: (LOW_MEM_64K - PAGE_SIZE) as u64,
         r#type: E820_RAM,
     };
-    // memory from 64K to LOW_MEM_SIZE is reserved
+    // memory from 64K to LOW_MEM_1M is reserved
     let entry_reserved = E820Entry {
-        addr: LOW64K as u64,
-        size: (LOW_MEM_SIZE - LOW64K) as u64,
+        addr: LOW_MEM_64K as u64,
+        size: (LOW_MEM_1M - LOW_MEM_64K) as u64,
         r#type: E820_RESERVED,
+    };
+    // LOW_MEM_1M to low_mem_size for ramdisk and multiboot
+    let entry_low_main = E820Entry {
+        addr: LOW_MEM_1M as u64,
+        size: (low_mem.size - LOW_MEM_1M) as u64,
+        r#type: E820_RAM,
     };
     // main memory above 4GB
     let entry_main = E820Entry {
@@ -271,19 +282,9 @@ pub fn load_linux64(
     bp.e820_table[0] = entry_first_page;
     bp.e820_table[1] = entry_low;
     bp.e820_table[2] = entry_reserved;
-    if rd_mem.is_none() {
-        bp.e820_table[3] = entry_main;
-        bp.e820_entries = 4;
-    } else {
-        let entry_rd = E820Entry {
-            addr: RD_BASE as u64,
-            size: round_up_4k(rd_size) as u64,
-            r#type: E820_RAM,
-        };
-        bp.e820_table[3] = entry_rd;
-        bp.e820_table[4] = entry_main;
-        bp.e820_entries = 5;
-    };
+    bp.e820_table[3] = entry_low_main;
+    bp.e820_table[4] = entry_main;
+    bp.e820_entries = 5;
     high_mem.write(bp, bp_offset, 0);
 
     // setup gdt
@@ -356,14 +357,14 @@ pub fn load_linux64(
     .into_iter()
     .collect();
 
-    let mut mem_maps = HashMap::new();
-    mem_maps.insert(0, low_mem);
-    mem_maps.insert(high_mem.start, high_mem);
-    if let Some(rd_mem_block) = rd_mem {
-        mem_maps.insert(RD_BASE, rd_mem_block);
-    }
-    vm.map_guest_mem(mem_maps)?;
+    vm.mem_space.write().unwrap().map(
+        high_mem.start,
+        high_mem.start,
+        high_mem.size,
+        HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
+    )?;
 
+    vm.high_mem.write().unwrap().push(high_mem);
     let mut guest_threads = Vec::with_capacity(num_gth as usize);
     let mut vector_senders = Vec::with_capacity(num_gth as usize);
 

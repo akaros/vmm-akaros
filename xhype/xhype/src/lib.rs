@@ -49,9 +49,13 @@ impl VMManager {
         Ok(VMManager {})
     }
 
-    pub fn create_vm(&self, cores: u32) -> Result<VirtualMachine, Error> {
+    pub fn create_vm(
+        &self,
+        cores: u32,
+        low_mem_size: Option<usize>,
+    ) -> Result<VirtualMachine, Error> {
         assert_eq!(cores, 1); //FIXME: currently only one core is supported
-        VirtualMachine::new(&self, cores)
+        VirtualMachine::new(&self, cores, low_mem_size)
     }
 }
 
@@ -64,6 +68,8 @@ impl Drop for VMManager {
 ////////////////////////////////////////////////////////////////////////////////
 // VirtualMachine
 ////////////////////////////////////////////////////////////////////////////////
+
+type AddressConverter = Arc<Box<dyn Fn(u64) -> usize + Send + Sync + 'static>>;
 
 #[derive(Debug, Copy, Clone)]
 pub enum PortPolicy {
@@ -89,11 +95,8 @@ pub enum PolicyList<T> {
 pub struct VirtualMachine {
     pub(crate) mem_space: RwLock<MemSpace>,
     cores: u32,
-    // the memory that is specifically allocated for the guest. For a vthread,
-    // it contains its stack and a paging structure. For a kernel, it contains
-    // its bios tables, APIC pages, high memory, etc.
-    // the format is: guest virtual address -> host memory block
-    pub(crate) mem_maps: RwLock<HashMap<usize, MachVMBlock>>,
+    pub(crate) low_mem: Option<RwLock<MachVMBlock>>, // memory below 4GiB
+    pub(crate) high_mem: RwLock<Vec<MachVMBlock>>,
     // serial ports
     pub(crate) com1: Mutex<Serial>,
     pub(crate) ioapic: Arc<RwLock<IoApic>>,
@@ -105,20 +108,46 @@ pub struct VirtualMachine {
     pub port_policy: PortPolicy,
     pub msr_list: PolicyList<u32>,
     pub msr_policy: MsrPolicy,
+    pub gpa2hva: AddressConverter,
 }
 
 impl VirtualMachine {
     // make it private to force user to create a vm by calling create_vm to make
     // sure that hv_vm_create() is called before hv_vm_space_create() is called
-    fn new(_vmm: &VMManager, cores: u32) -> Result<Self, Error> {
+    fn new(_vmm: &VMManager, cores: u32, low_mem_size: Option<usize>) -> Result<Self, Error> {
         let ioapic = Arc::new(RwLock::new(IoApic::new()));
         let vector_senders = Arc::new(Mutex::new(None));
         let (irq_sender, irq_receiver) = channel::<u32>();
         let vcpu_ids = Arc::new(RwLock::new(vec![u32::MAX; cores as usize]));
-        let mut vm = VirtualMachine {
-            mem_space: RwLock::new(MemSpace::create()?),
+        let mut mem_space = MemSpace::create()?;
+        Self::map_host_mem(&mut mem_space)?;
+        let (low_mem, gpa2hva): (_, AddressConverter) = if let Some(size) = low_mem_size {
+            let low_mem_block = MachVMBlock::new(size)?;
+            mem_space.map(
+                low_mem_block.start,
+                0,
+                size,
+                HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
+            )?;
+            let low_mem_start = low_mem_block.start;
+            let converter = move |gpa: u64| {
+                if gpa < size as u64 {
+                    gpa as usize + low_mem_start
+                } else {
+                    gpa as usize
+                }
+            };
+            (
+                Some(RwLock::new(low_mem_block)),
+                Arc::new(Box::new(converter)),
+            )
+        } else {
+            let converter = |gpa: u64| gpa as usize;
+            (None, Arc::new(Box::new(converter)))
+        };
+        let vm = VirtualMachine {
+            mem_space: RwLock::new(mem_space),
             cores,
-            mem_maps: RwLock::new(HashMap::new()),
             com1: Mutex::new(Serial::new(4, irq_sender.clone())),
             pci_bus: Mutex::new(PciBus::new()),
             ioapic: ioapic.clone(),
@@ -129,8 +158,10 @@ impl VirtualMachine {
             port_policy: PortPolicy::AllOne,
             msr_list: PolicyList::Except(HashSet::new()),
             msr_policy: MsrPolicy::GP,
+            gpa2hva,
+            low_mem,
+            high_mem: RwLock::new(vec![]),
         };
-        vm.gpa2hva_map()?;
         // start a thread for IO APIC to collect interrupts
         std::thread::Builder::new()
             .name("IO APIC".into())
@@ -139,31 +170,10 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    pub(crate) fn map_guest_mem(&self, maps: HashMap<usize, MachVMBlock>) -> Result<(), Error> {
-        let mut mem_space = self.mem_space.write().unwrap();
-        for (gpa, mem_block) in maps.iter() {
-            info!(
-                "map gpa={:x} to hva={:x}, size={} pages",
-                gpa,
-                mem_block.start,
-                mem_block.size / 4096
-            );
-            mem_space.map(
-                mem_block.start,
-                *gpa,
-                mem_block.size,
-                HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC,
-            )?;
-        }
-        *self.mem_maps.write().unwrap() = maps;
-        Ok(())
-    }
-
     // setup the identity mapping from guest physical address to host virtual
     // address.
-    fn gpa2hva_map(&mut self) -> Result<(), Error> {
+    fn map_host_mem(mem_space: &mut MemSpace) -> Result<(), Error> {
         let mut trial_addr = 1;
-        let mut mem_space = self.mem_space.write().unwrap();
         loop {
             match vm_self_region(trial_addr) {
                 Ok((start, size, info)) => {
@@ -178,6 +188,12 @@ impl VirtualMachine {
             }
         }
         Ok(())
+    }
+
+    pub unsafe fn read_guest_mem<T>(&self, gpa: u64, index: u64) -> &T {
+        let hva = (self.gpa2hva)(gpa);
+        let ptr = (hva + index as usize * std::mem::size_of::<T>()) as *const T;
+        &*ptr
     }
 }
 
@@ -350,11 +366,11 @@ mod test {
     fn create_vm_test() {
         {
             let vmm = VMManager::new().unwrap();
-            let _vm = vmm.create_vm(1).unwrap();
+            let _vm = vmm.create_vm(1, None).unwrap();
         }
         {
             let vmm2 = VMManager::new().unwrap();
-            let _vm2 = vmm2.create_vm(1).unwrap();
+            let _vm2 = vmm2.create_vm(1, None).unwrap();
         }
     }
 }
