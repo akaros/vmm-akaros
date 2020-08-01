@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
 use super::{
-    channel, AddressConverter, IrqSender, Sender, TaskReceiver, TaskSender, VirtqReceiver,
-    VirtqSender,
+    channel, consts::*, AddressConverter, IrqSender, Sender, TaskReceiver, TaskSender,
+    VirtqReceiver, VirtqSender,
 };
+#[allow(unused_imports)]
+use log::*;
 use std::mem::size_of;
 use std::sync::{Arc, RwLock};
 
@@ -143,24 +145,28 @@ impl Virtq<usize> {
         unsafe { ptr.read() }
     }
 
-    pub fn get_avail<C>(
-        &self,
-        index: u16,
-        converter: C,
-    ) -> (Vec<(usize, usize)>, Vec<(usize, usize)>)
+    pub fn get_desc_chain<C>(&self, index: u16, converter: C) -> (Vec<(usize, usize)>, usize)
     where
         C: Fn(u64) -> usize,
     {
         let desc_head = self.read_avail(index);
         let mut desc_index = desc_head;
-        let mut readable = Vec::new();
-        let mut writable = Vec::new();
+        let mut desc_chain = Vec::new();
+        let mut writable_count = 0;
         loop {
             let desc = self.read_desc(desc_index);
             if desc.flags & VIRTQ_DESC_F_WRITE == 0 {
-                readable.push((converter(desc.addr), desc.len as usize));
+                if writable_count == 0 {
+                    desc_chain.push((converter(desc.addr), desc.len as usize));
+                } else {
+                    panic!(
+                        "2.6.4.2, The driver MUST place any device-writable \
+                    descriptor elements after any device-readable descriptor elements."
+                    )
+                }
             } else {
-                writable.push((converter(desc.addr), desc.len as usize));
+                desc_chain.push((converter(desc.addr), desc.len as usize));
+                writable_count += 1;
             }
             if desc.flags & VIRTQ_DESC_F_NEXT > 0 {
                 desc_index = desc.next;
@@ -168,7 +174,7 @@ impl Virtq<usize> {
                 break;
             }
         }
-        (readable, writable)
+        (desc_chain, writable_count)
     }
 }
 
@@ -181,36 +187,71 @@ pub struct VirtqManager {
     pub virtq_sender: VirtqSender,
 }
 
-pub type VirtioVqSrv = Box<
-    dyn Fn(TaskReceiver, VirtqReceiver, u32, IrqSender, Arc<RwLock<u32>>, AddressConverter)
-        + Send
-        + Sync
-        + 'static,
->;
+pub trait VirtqDescHandle {
+    fn handle_desc_chain(
+        &mut self,
+        virtq: &Virtq<usize>,
+        index: u16,
+        gpa2hva: &AddressConverter,
+    ) -> u32;
+}
 
 impl VirtqManager {
+    fn serve(
+        task_rx: TaskReceiver,
+        virtq_rx: VirtqReceiver,
+        irq: u32,
+        irq_tx: IrqSender,
+        isr: Arc<RwLock<u32>>,
+        convert: AddressConverter,
+        mut handler: impl VirtqDescHandle,
+    ) {
+        for virtq in virtq_rx.iter() {
+            let virtq = virtq.to_hva(|gpa| convert(gpa));
+            let mut current_index = 0;
+            for t in task_rx.iter() {
+                if t.is_none() {
+                    break;
+                }
+                let avail_index = virtq.avail_index();
+                while current_index < avail_index {
+                    let length_write = handler.handle_desc_chain(&virtq, current_index, &convert);
+                    debug!("handle write 0x{:x} bytes", length_write);
+                    virtq.push_used(virtq.read_avail(current_index), length_write);
+                    current_index += 1;
+                    let avail_flag = virtq.avail_flags();
+                    if avail_flag & VIRTQ_AVAIL_F_NO_INTERRUPT == 0 {
+                        *isr.write().unwrap() |= VIRTIO_INT_VRING;
+                        irq_tx.send(irq).unwrap();
+                        info!("send irq{} for virtq", irq);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn new(
         name: String,
         qnum_max: u32,
-        srv: VirtioVqSrv,
         irq: u32,
         irq_sender: Sender<u32>,
         isr: Arc<RwLock<u32>>,
-        gpa2hva: AddressConverter,
+        converter: AddressConverter,
+        handler: impl VirtqDescHandle + Send + 'static,
     ) -> Self {
-        let (task_sender, task_receiver) = channel();
-        let (virtq_sender, virtq_receiver) = channel();
+        let (task_tx, task_rx) = channel();
+        let (virtq_tx, virtq_rx) = channel();
         std::thread::Builder::new()
             .name(name.clone())
-            .spawn(move || srv(task_receiver, virtq_receiver, irq, irq_sender, isr, gpa2hva))
+            .spawn(move || Self::serve(task_rx, virtq_rx, irq, irq_sender, isr, converter, handler))
             .expect(&format!("cannot create thread for virtq {}", &name));
         VirtqManager {
             name,
             qnum_max,
             qready: 0,
             virtq: Virtq::new(0),
-            task_sender: task_sender,
-            virtq_sender,
+            task_sender: task_tx,
+            virtq_sender: virtq_tx,
         }
     }
 }

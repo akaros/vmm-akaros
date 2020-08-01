@@ -2,12 +2,10 @@
 
 use super::consts::*;
 use super::virtq::*;
-use super::{AddressConverter, IrqSender, TaskReceiver};
-use super::{VirtioDevice, VirtqReceiver};
+use super::VirtioDevice;
 use crate::{err::Error, GuestThread, VCPU};
 #[allow(unused_imports)]
 use log::*;
-use std::sync::{Arc, RwLock};
 
 // The implementation is based on https://github.com/akaros/akaros/blob/master/user/vmm/virtio_mmio.c
 
@@ -96,9 +94,6 @@ pub const VIRTIO_MMIO_CONFIG_GENERATION: usize = 0x0fc;
  * the per-driver configuration space - Read Write */
 pub const VIRTIO_MMIO_CONFIG: usize = 0x100;
 
-pub const VIRTIO_MMIO_INT_VRING: u32 = 1 << 0;
-pub const VIRTIO_MMIO_INT_CONFIG: u32 = 1 << 1;
-
 pub const VIRT_MAGIC: u32 = 0x74726976; /* 'virt' */
 
 pub const VIRT_MMIO_VERSION: u32 = 0x2;
@@ -139,39 +134,6 @@ impl VirtioMmioDev {
                 self.dev.name, self.dev.qsel
             );
             None
-        }
-    }
-}
-
-pub fn virtq_server<F>(
-    task_rx: TaskReceiver,
-    virtq_rx: VirtqReceiver,
-    irq: u32,
-    irq_tx: IrqSender,
-    isr: Arc<RwLock<u32>>,
-    gpa2hva: &AddressConverter,
-    handler: F,
-) where
-    F: Fn(&Virtq<usize>, u16, &AddressConverter) -> u32,
-{
-    for virtq in virtq_rx.iter() {
-        let virtq = virtq.to_hva(|gpa| gpa2hva(gpa));
-        let mut current_index = 0;
-        for t in task_rx.iter() {
-            if t.is_none() {
-                break;
-            }
-            let avail_index = virtq.avail_index();
-            while current_index < avail_index {
-                let length_write = handler(&virtq, current_index, gpa2hva);
-                virtq.push_used(virtq.read_avail(current_index), length_write);
-                current_index += 1;
-                let avail_flag = virtq.avail_flags();
-                if avail_flag & VIRTQ_AVAIL_F_NO_INTERRUPT == 0 {
-                    *isr.write().unwrap() |= VIRTIO_MMIO_INT_VRING;
-                    irq_tx.send(irq).unwrap();
-                }
-            }
         }
     }
 }
