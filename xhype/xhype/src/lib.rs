@@ -71,7 +71,7 @@ impl Drop for VMManager {
 // VirtualMachine
 ////////////////////////////////////////////////////////////////////////////////
 
-type AddressConverter = Arc<Box<dyn Fn(u64) -> usize + Send + Sync + 'static>>;
+type AddressConverter = Arc<dyn Fn(u64) -> usize + Send + Sync>;
 
 #[derive(Debug, Copy, Clone)]
 pub enum PortPolicy {
@@ -144,14 +144,11 @@ impl VirtualMachine {
                 }
             };
             virtio_base = std::cmp::max(GiB, size);
-            (
-                Some(RwLock::new(low_mem_block)),
-                Arc::new(Box::new(converter)),
-            )
+            (Some(RwLock::new(low_mem_block)), Arc::new(converter))
         } else {
             virtio_base = GiB; // just use the 1 GiB address as virtio base
             let converter = |gpa: u64| gpa as usize;
-            (None, Arc::new(Box::new(converter)))
+            (None, Arc::new(converter))
         };
         let vm = VirtualMachine {
             mem_space: RwLock::new(mem_space),

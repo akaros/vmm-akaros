@@ -31,6 +31,9 @@ pub mod consts {
     pub const VIRTIO_CONFIG_S_FAILED: u8 = 0x80;
     /* v1.0 compliant. */
     pub const VIRTIO_F_VERSION_1: u8 = 32;
+
+    pub const VIRTIO_INT_VRING: u32 = 1 << 0;
+    pub const VIRTIO_INT_CONFIG: u32 = 1 << 1;
 }
 
 // virtio-v1.0-cs04 s4 Device types

@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+/*! Implements a virtio-net device based on [vmnet](https://developer.apple.com/documentation/vmnet?language=objc).
+*/
+
 use super::consts::*;
-use super::mmio::{virtq_server, VirtioMmioDev};
 use super::virtq::*;
 use super::{AddressConverter, Sender, VirtioDevCfg, VirtioDevice, VirtioId};
 #[allow(unused_imports)]
@@ -12,26 +14,46 @@ use std::sync::{Arc, RwLock};
 
 pub const VIRTIO_HEADER_SIZE: usize = 12;
 
-pub const VIRTIO_NET_F_CSUM: u64 = 0; /* Host handles pkts w/ partial csum */
-pub const VIRTIO_NET_F_GUEST_CSUM: u64 = 1; /* Guest handles pkts w/ partial csum */
-pub const VIRTIO_NET_F_CTRL_GUEST_OFFLOADS: u64 = 2; /* Dynamic offload configuration. */
+/// Host handles pkts w/ partial csum
+pub const VIRTIO_NET_F_CSUM: u64 = 0;
+/// Guest handles pkts w/ partial csum
+pub const VIRTIO_NET_F_GUEST_CSUM: u64 = 1;
+/// Dynamic offload configuration.
+pub const VIRTIO_NET_F_CTRL_GUEST_OFFLOADS: u64 = 2;
+/// Device maximum MTU reporting is supported
 pub const VIRTIO_NET_F_MTU: u64 = 3;
-pub const VIRTIO_NET_F_MAC: u64 = 5; /* Host has given MAC address. */
-pub const VIRTIO_NET_F_GUEST_TSO4: u64 = 7; /* Guest can handle TSOv4 in. */
-pub const VIRTIO_NET_F_GUEST_TSO6: u64 = 8; /* Guest can handle TSOv6 in. */
-pub const VIRTIO_NET_F_GUEST_ECN: u64 = 9; /* Guest can handle TSO[6] w/ ECN in. */
-pub const VIRTIO_NET_F_GUEST_UFO: u64 = 10; /* Guest can handle UFO in. */
-pub const VIRTIO_NET_F_HOST_TSO4: u64 = 11; /* Host can handle TSOv4 in. */
-pub const VIRTIO_NET_F_HOST_TSO6: u64 = 12; /* Host can handle TSOv6 in. */
-pub const VIRTIO_NET_F_HOST_ECN: u64 = 13; /* Host can handle TSO[6] w/ ECN in. */
-pub const VIRTIO_NET_F_HOST_UFO: u64 = 14; /* Host can handle UFO in. */
-pub const VIRTIO_NET_F_MRG_RXBUF: u64 = 15; /* Host can merge receive buffers. */
-pub const VIRTIO_NET_F_STATUS: u64 = 16; /* virtio_net_config.status available */
-pub const VIRTIO_NET_F_CTRL_VQ: u64 = 17; /* Control channel available */
-pub const VIRTIO_NET_F_CTRL_RX: u64 = 18; /* Control channel RX mode support */
-pub const VIRTIO_NET_F_CTRL_VLAN: u64 = 19; /* Control channel VLAN filtering */
-pub const VIRTIO_NET_F_CTRL_RX_EXTRA: u64 = 20; /* Extra RX mode control support */
-pub const VIRTIO_NET_F_GUEST_ANNOUNCE: u64 = 21; /* Guest can announce device on the network */
+/// Host has given MAC address.
+pub const VIRTIO_NET_F_MAC: u64 = 5;
+/// Guest can handle TSOv4 in.
+pub const VIRTIO_NET_F_GUEST_TSO4: u64 = 7;
+/// Guest can handle TSOv6 in.
+pub const VIRTIO_NET_F_GUEST_TSO6: u64 = 8;
+/// Guest can handle TSO[6] w/ ECN in.
+pub const VIRTIO_NET_F_GUEST_ECN: u64 = 9;
+/// Guest can handle UFO in.
+pub const VIRTIO_NET_F_GUEST_UFO: u64 = 10;
+/// Host can handle TSOv4 in.
+pub const VIRTIO_NET_F_HOST_TSO4: u64 = 11;
+/// Host can handle TSOv6 in.
+pub const VIRTIO_NET_F_HOST_TSO6: u64 = 12;
+/// Host can handle TSO[6] w/ ECN in.
+pub const VIRTIO_NET_F_HOST_ECN: u64 = 13;
+/// Host can handle UFO in.
+pub const VIRTIO_NET_F_HOST_UFO: u64 = 14;
+/// Host can merge receive buffers.
+pub const VIRTIO_NET_F_MRG_RXBUF: u64 = 15;
+/// virtio_net_config.status available
+pub const VIRTIO_NET_F_STATUS: u64 = 16;
+/// Control channel available
+pub const VIRTIO_NET_F_CTRL_VQ: u64 = 17;
+/// Control channel RX mode support
+pub const VIRTIO_NET_F_CTRL_RX: u64 = 18;
+/// Control channel VLAN filtering
+pub const VIRTIO_NET_F_CTRL_VLAN: u64 = 19;
+/// Extra RX mode control support
+pub const VIRTIO_NET_F_CTRL_RX_EXTRA: u64 = 20;
+/// Guest can announce device on the network
+pub const VIRTIO_NET_F_GUEST_ANNOUNCE: u64 = 21;
 
 pub const VMNET_SUCCESS: u32 = 1000;
 
@@ -48,135 +70,114 @@ extern "C" {
     fn vmnet_write(interface: usize, packets: *const VmPktDesc, pktcnt: *mut u32) -> u32;
     fn create_interface(interface: *mut usize, mac: *mut u8, mtu: *mut u16) -> u32;
 }
-
-fn net_rx_handler(
-    virtq: &Virtq<usize>,
-    index: u16,
-    gpa2hva: &AddressConverter,
+/// Transmits the guest's output network packets
+struct NetRxDescHandler {
     interface: usize,
-) -> u32 {
-    let (readable, writable) = virtq.get_avail(index, |gpa| gpa2hva(gpa));
-    debug_assert_eq!(readable.len(), 0);
-    drop(readable);
-    let mut trim_length = VIRTIO_HEADER_SIZE;
-    let mut iov = Vec::with_capacity(writable.len());
-    let mut total_size = 0;
-    for (mut addr, mut len) in writable.iter() {
-        if trim_length > 0 {
-            if len > trim_length {
-                len -= trim_length;
-                addr += trim_length;
-                trim_length = 0;
-            } else {
-                trim_length -= len;
-                continue;
+}
+
+impl VirtqDescHandle for NetRxDescHandler {
+    fn handle_desc_chain(
+        &mut self,
+        virtq: &Virtq<usize>,
+        index: u16,
+        gpa2hva: &AddressConverter,
+    ) -> u32 {
+        let (writable, writable_count) = virtq.get_desc_chain(index, |gpa| gpa2hva(gpa));
+        debug_assert_eq!(writable.len(), writable_count);
+        let mut trim_length = VIRTIO_HEADER_SIZE;
+        let mut iov = Vec::with_capacity(writable.len());
+        let mut total_size = 0;
+        for (mut addr, mut len) in writable.iter() {
+            if trim_length > 0 {
+                if len > trim_length {
+                    len -= trim_length;
+                    addr += trim_length;
+                    trim_length = 0;
+                } else {
+                    trim_length -= len;
+                    continue;
+                }
             }
+            total_size += len;
+            let io_slice = unsafe { slice::from_raw_parts_mut(addr as *mut u8, len) };
+            iov.push(IoSliceMut::new(io_slice));
         }
-        total_size += len;
-        let io_slice = unsafe { slice::from_raw_parts_mut(addr as *mut u8, len) };
-        iov.push(IoSliceMut::new(io_slice));
+        let mut vmpktdesc = VmPktDesc {
+            vm_flags: 0,
+            vm_pkt_iovcnt: iov.len() as u32,
+            vm_pkt_size: total_size,
+            vm_pkt_iov: iov.as_mut_ptr(),
+        };
+        let mut pkt_count = 1;
+        let ret = unsafe { vmnet_read_blocking(self.interface, &mut vmpktdesc, &mut pkt_count) };
+        if ret == VMNET_SUCCESS && pkt_count == 1 {
+            info!("net_rx_srv, get {} bytes", vmpktdesc.vm_pkt_size);
+            let (addr, _) = writable[0];
+            let first_buffer = unsafe { slice::from_raw_parts_mut(addr as *mut u16, 8) };
+            for i in 0..5 {
+                first_buffer[i] = 0;
+            }
+            first_buffer[5] = 1;
+            let content = format!("{:04x?}", first_buffer);
+            error!("rx header {}", content);
+            (vmpktdesc.vm_pkt_size + VIRTIO_HEADER_SIZE) as u32
+        } else {
+            error!("vmnet_read() returns {}", ret);
+            0
+        }
     }
-    let mut vmpktdesc = VmPktDesc {
-        vm_flags: 0,
-        vm_pkt_iovcnt: iov.len() as u32,
-        vm_pkt_size: total_size,
-        vm_pkt_iov: iov.as_mut_ptr(),
-    };
-    let mut pkt_count = 1;
-    let ret = unsafe { vmnet_read_blocking(interface, &mut vmpktdesc, &mut pkt_count) };
-    if ret == VMNET_SUCCESS && pkt_count == 1 {
-        info!("net_rx_srv, get {} bytes", vmpktdesc.vm_pkt_size);
-        let (addr, _) = writable[0];
-        let first_buffer = unsafe { slice::from_raw_parts_mut(addr as *mut u16, 8) };
-        for i in 0..5 {
-            first_buffer[i] = 0;
+}
+
+/// delivers incoming network packets to the guest
+struct NetTxDescHandler {
+    interface: usize,
+}
+
+impl VirtqDescHandle for NetTxDescHandler {
+    fn handle_desc_chain(
+        &mut self,
+        virtq: &Virtq<usize>,
+        index: u16,
+        gpa2hva: &AddressConverter,
+    ) -> u32 {
+        let (readable, writable_count) = virtq.get_desc_chain(index, |gpa| gpa2hva(gpa));
+        debug_assert_eq!(writable_count, 0);
+        let mut trim_length = VIRTIO_HEADER_SIZE;
+        let mut iov = Vec::with_capacity(readable.len());
+        let mut total_size = 0;
+        for (mut addr, mut len) in readable.into_iter() {
+            if trim_length > 0 {
+                if len > trim_length {
+                    len -= trim_length;
+                    addr += trim_length;
+                    trim_length = 0;
+                } else {
+                    trim_length -= len;
+                    continue;
+                }
+            }
+            total_size += len;
+            let io_slice = unsafe { slice::from_raw_parts_mut(addr as *mut u8, len) };
+
+            iov.push(IoSliceMut::new(io_slice));
         }
-        first_buffer[5] = 1;
-        let content = format!("{:04x?}", first_buffer);
-        error!("rx header {}", content);
-        (vmpktdesc.vm_pkt_size + VIRTIO_HEADER_SIZE) as u32
-    } else {
-        error!("vmnet_read() returns {}", ret);
+        let vmpktdesc = VmPktDesc {
+            vm_flags: 0,
+            vm_pkt_iovcnt: iov.len() as u32,
+            vm_pkt_size: total_size,
+            vm_pkt_iov: iov.as_mut_ptr(),
+        };
+        let mut pkt_count = 1;
+        let ret = unsafe { vmnet_write(self.interface, &vmpktdesc, &mut pkt_count) };
+        if ret == VMNET_SUCCESS && pkt_count == 1 {
+            info!("net_tx_srv, write {} bytes", vmpktdesc.vm_pkt_size);
+        } else {
+            error!("vmnet_write returns {}", ret);
+        }
         0
     }
 }
-
-fn net_rx_srv(iref: usize) -> VirtioVqSrv {
-    Box::new(move |task_rx, virtq_rx, irq, irq_tx, isr, gpa2hva| {
-        virtq_server(
-            task_rx,
-            virtq_rx,
-            irq,
-            irq_tx,
-            isr,
-            &gpa2hva,
-            |virtq: &Virtq<usize>, index: u16, converter| {
-                net_rx_handler(virtq, index, converter, iref)
-            },
-        );
-    })
-}
-
-fn net_tx_handler(
-    virtq: &Virtq<usize>,
-    index: u16,
-    gpa2hva: &AddressConverter,
-    interface: usize,
-) -> u32 {
-    let (readable, writable) = virtq.get_avail(index, |gpa| gpa2hva(gpa));
-    debug_assert_eq!(writable.len(), 0);
-    drop(writable);
-    let mut trim_length = VIRTIO_HEADER_SIZE;
-    let mut iov = Vec::with_capacity(readable.len());
-    let mut total_size = 0;
-    for (mut addr, mut len) in readable.into_iter() {
-        if trim_length > 0 {
-            if len > trim_length {
-                len -= trim_length;
-                addr += trim_length;
-                trim_length = 0;
-            } else {
-                trim_length -= len;
-                continue;
-            }
-        }
-        total_size += len;
-        let io_slice = unsafe { slice::from_raw_parts_mut(addr as *mut u8, len) };
-
-        iov.push(IoSliceMut::new(io_slice));
-    }
-    let vmpktdesc = VmPktDesc {
-        vm_flags: 0,
-        vm_pkt_iovcnt: iov.len() as u32,
-        vm_pkt_size: total_size,
-        vm_pkt_iov: iov.as_mut_ptr(),
-    };
-    let mut pkt_count = 1;
-    let ret = unsafe { vmnet_write(interface, &vmpktdesc, &mut pkt_count) };
-    if ret == VMNET_SUCCESS && pkt_count == 1 {
-        info!("net_tx_srv, write {} bytes", vmpktdesc.vm_pkt_size);
-    } else {
-        error!("vmnet_write returns {}", ret);
-    }
-    0
-}
-
-fn net_tx_srv(interface: usize) -> VirtioVqSrv {
-    Box::new(move |task_rx, virtq_rx, irq, irq_tx, isr, gpa2hva| {
-        virtq_server(
-            task_rx,
-            virtq_rx,
-            irq,
-            irq_tx,
-            isr,
-            &gpa2hva,
-            |virtq: &Virtq<usize>, index: u16, converter| {
-                net_tx_handler(virtq, index, converter, interface)
-            },
-        );
-    })
-}
-
+/// virtio-net device's config space, see virtio 1.1, 5.1.4 Device configuration layout
 pub struct VirtioNetCfg {
     pub mac: [u8; 6],
     pub status: u16,
@@ -219,13 +220,13 @@ impl VirtioDevice {
         gpa2hva: AddressConverter,
     ) -> Self {
         let mut interface = 0;
-        let mut mac = vec![0u8; 17];
+        let mut mac_str = vec![0u8; 17];
         let mut mtu = 0u16;
-        let ret = unsafe { create_interface(&mut interface, mac.as_mut_ptr(), &mut mtu) };
+        let ret = unsafe { create_interface(&mut interface, mac_str.as_mut_ptr(), &mut mtu) };
         if ret != 0 {
             panic!("cannot create vmnet interface. root privilege is required.");
         }
-        let mac_vec: Vec<u8> = String::from_utf8(mac)
+        let mac_vec: Vec<u8> = String::from_utf8(mac_str)
             .unwrap()
             .split(':')
             .map(|c| u8::from_str_radix(c, 16).unwrap())
@@ -239,26 +240,26 @@ impl VirtioDevice {
             mtu,
             gen: 0,
         };
-
         let isr = Arc::new(RwLock::new(0));
         let rx = VirtqManager::new(
             format!("{}_rx", name),
             64,
-            net_rx_srv(interface),
             irq,
             irq_sender.clone(),
             isr.clone(),
             gpa2hva.clone(),
+            NetRxDescHandler { interface },
         );
         let tx = VirtqManager::new(
             format!("{}_tx", name),
             64,
-            net_tx_srv(interface),
             irq,
             irq_sender.clone(),
             isr.clone(),
             gpa2hva.clone(),
+            NetTxDescHandler { interface },
         );
+
         let vqs = vec![rx, tx];
 
         VirtioDevice {
@@ -276,18 +277,5 @@ impl VirtioDevice {
             cfg_gen: 0,
             irq,
         }
-    }
-}
-
-impl VirtioMmioDev {
-    pub fn new_vmnet(
-        addr: usize,
-        irq: u32,
-        name: String,
-        irq_sender: Sender<u32>,
-        gpa2hva: AddressConverter,
-    ) -> Self {
-        let vmnet = VirtioDevice::new_vmnet(name, irq, irq_sender, gpa2hva);
-        VirtioMmioDev { addr, dev: vmnet }
     }
 }
