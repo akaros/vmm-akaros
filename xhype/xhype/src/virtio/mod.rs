@@ -2,6 +2,7 @@
 
 pub mod mmio;
 pub mod net;
+pub mod rng;
 pub mod virtq;
 
 use crate::AddressConverter;
