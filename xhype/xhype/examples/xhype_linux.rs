@@ -115,6 +115,12 @@ fn boot_linux() {
         vm.irq_sender.clone(),
         vm.gpa2hva.clone(),
     ));
+    vm.add_virtio_mmio_device(VirtioDevice::new_rng(
+        "virtio-rng".into(),
+        1,
+        vm.irq_sender.clone(),
+        vm.gpa2hva.clone(),
+    ));
     vm.port_list = port_list;
     vm.port_policy = port_policy;
     vm.msr_list = msr_list;
