@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+/*! Implements a virtio-net device based on [vmnet](https://developer.apple.com/documentation/vmnet?language=objc).
+*/
+
 use super::consts::*;
 use super::virtq::*;
 use super::{AddressConverter, Sender, VirtioDevCfg, VirtioDevice, VirtioId};
@@ -11,26 +14,46 @@ use std::sync::{Arc, RwLock};
 
 pub const VIRTIO_HEADER_SIZE: usize = 12;
 
-pub const VIRTIO_NET_F_CSUM: u64 = 0; /* Host handles pkts w/ partial csum */
-pub const VIRTIO_NET_F_GUEST_CSUM: u64 = 1; /* Guest handles pkts w/ partial csum */
-pub const VIRTIO_NET_F_CTRL_GUEST_OFFLOADS: u64 = 2; /* Dynamic offload configuration. */
+/// Host handles pkts w/ partial csum
+pub const VIRTIO_NET_F_CSUM: u64 = 0;
+/// Guest handles pkts w/ partial csum
+pub const VIRTIO_NET_F_GUEST_CSUM: u64 = 1;
+/// Dynamic offload configuration.
+pub const VIRTIO_NET_F_CTRL_GUEST_OFFLOADS: u64 = 2;
+/// Device maximum MTU reporting is supported
 pub const VIRTIO_NET_F_MTU: u64 = 3;
-pub const VIRTIO_NET_F_MAC: u64 = 5; /* Host has given MAC address. */
-pub const VIRTIO_NET_F_GUEST_TSO4: u64 = 7; /* Guest can handle TSOv4 in. */
-pub const VIRTIO_NET_F_GUEST_TSO6: u64 = 8; /* Guest can handle TSOv6 in. */
-pub const VIRTIO_NET_F_GUEST_ECN: u64 = 9; /* Guest can handle TSO[6] w/ ECN in. */
-pub const VIRTIO_NET_F_GUEST_UFO: u64 = 10; /* Guest can handle UFO in. */
-pub const VIRTIO_NET_F_HOST_TSO4: u64 = 11; /* Host can handle TSOv4 in. */
-pub const VIRTIO_NET_F_HOST_TSO6: u64 = 12; /* Host can handle TSOv6 in. */
-pub const VIRTIO_NET_F_HOST_ECN: u64 = 13; /* Host can handle TSO[6] w/ ECN in. */
-pub const VIRTIO_NET_F_HOST_UFO: u64 = 14; /* Host can handle UFO in. */
-pub const VIRTIO_NET_F_MRG_RXBUF: u64 = 15; /* Host can merge receive buffers. */
-pub const VIRTIO_NET_F_STATUS: u64 = 16; /* virtio_net_config.status available */
-pub const VIRTIO_NET_F_CTRL_VQ: u64 = 17; /* Control channel available */
-pub const VIRTIO_NET_F_CTRL_RX: u64 = 18; /* Control channel RX mode support */
-pub const VIRTIO_NET_F_CTRL_VLAN: u64 = 19; /* Control channel VLAN filtering */
-pub const VIRTIO_NET_F_CTRL_RX_EXTRA: u64 = 20; /* Extra RX mode control support */
-pub const VIRTIO_NET_F_GUEST_ANNOUNCE: u64 = 21; /* Guest can announce device on the network */
+/// Host has given MAC address.
+pub const VIRTIO_NET_F_MAC: u64 = 5;
+/// Guest can handle TSOv4 in.
+pub const VIRTIO_NET_F_GUEST_TSO4: u64 = 7;
+/// Guest can handle TSOv6 in.
+pub const VIRTIO_NET_F_GUEST_TSO6: u64 = 8;
+/// Guest can handle TSO[6] w/ ECN in.
+pub const VIRTIO_NET_F_GUEST_ECN: u64 = 9;
+/// Guest can handle UFO in.
+pub const VIRTIO_NET_F_GUEST_UFO: u64 = 10;
+/// Host can handle TSOv4 in.
+pub const VIRTIO_NET_F_HOST_TSO4: u64 = 11;
+/// Host can handle TSOv6 in.
+pub const VIRTIO_NET_F_HOST_TSO6: u64 = 12;
+/// Host can handle TSO[6] w/ ECN in.
+pub const VIRTIO_NET_F_HOST_ECN: u64 = 13;
+/// Host can handle UFO in.
+pub const VIRTIO_NET_F_HOST_UFO: u64 = 14;
+/// Host can merge receive buffers.
+pub const VIRTIO_NET_F_MRG_RXBUF: u64 = 15;
+/// virtio_net_config.status available
+pub const VIRTIO_NET_F_STATUS: u64 = 16;
+/// Control channel available
+pub const VIRTIO_NET_F_CTRL_VQ: u64 = 17;
+/// Control channel RX mode support
+pub const VIRTIO_NET_F_CTRL_RX: u64 = 18;
+/// Control channel VLAN filtering
+pub const VIRTIO_NET_F_CTRL_VLAN: u64 = 19;
+/// Extra RX mode control support
+pub const VIRTIO_NET_F_CTRL_RX_EXTRA: u64 = 20;
+/// Guest can announce device on the network
+pub const VIRTIO_NET_F_GUEST_ANNOUNCE: u64 = 21;
 
 pub const VMNET_SUCCESS: u32 = 1000;
 
@@ -47,7 +70,7 @@ extern "C" {
     fn vmnet_write(interface: usize, packets: *const VmPktDesc, pktcnt: *mut u32) -> u32;
     fn create_interface(interface: *mut usize, mac: *mut u8, mtu: *mut u16) -> u32;
 }
-
+/// Transmits the guest's output network packets
 struct NetRxDescHandler {
     interface: usize,
 }
@@ -105,6 +128,7 @@ impl VirtqDescHandle for NetRxDescHandler {
     }
 }
 
+/// delivers incoming network packets to the guest
 struct NetTxDescHandler {
     interface: usize,
 }
@@ -153,7 +177,7 @@ impl VirtqDescHandle for NetTxDescHandler {
         0
     }
 }
-
+/// virtio-net device's config space, see virtio 1.1, 5.1.4 Device configuration layout
 pub struct VirtioNetCfg {
     pub mac: [u8; 6],
     pub status: u16,

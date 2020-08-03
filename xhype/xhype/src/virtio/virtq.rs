@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+/*!  Includes the definition and methods of Virtq
+
+ported from [virtio_queue.h](https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/listings/virtio_queue.h)
+*/
+
 use super::{
     channel, consts::*, AddressConverter, IrqSender, Sender, TaskReceiver, TaskSender,
     VirtqReceiver, VirtqSender,
@@ -9,35 +14,36 @@ use log::*;
 use std::mem::size_of;
 use std::sync::{Arc, RwLock};
 
-// https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/listings/virtio_queue.h
-
-/* This marks a buffer as continuing via the next field. */
+/// This marks a buffer as continuing via the next field.
 pub const VIRTQ_DESC_F_NEXT: u16 = 1;
-/* This marks a buffer as write-only (otherwise read-only). */
+/// This marks a buffer as write-only (otherwise read-only).
 pub const VIRTQ_DESC_F_WRITE: u16 = 2;
-/* This means the buffer contains a list of buffer descriptors. */
+/// This means the buffer contains a list of buffer descriptors.
 pub const VIRTQ_DESC_F_INDIRECT: u16 = 4;
 
-/* The device uses this in used->flags to advise the driver: don't kick me
- * when you add a buffer.  It's unreliable, so it's simply an
- * optimization. */
+/// The device uses this in used->flags to advise the driver: don't kick me
+/// when you add a buffer.  It's unreliable, so it's simply an
+/// optimization.
 pub const VIRTQ_USED_F_NO_NOTIFY: u16 = 1;
-/* The driver uses this in avail->flags to advise the device: don't
- * interrupt me when you consume a buffer.  It's unreliable, so it's
- * simply an optimization.  */
+/// The driver uses this in avail->flags to advise the device: don't
+/// interrupt me when you consume a buffer.  It's unreliable, so it's
+/// simply an optimization.
 pub const VIRTQ_AVAIL_F_NO_INTERRUPT: u16 = 1;
 
-/* Support for indirect descriptors */
+/// Support for indirect descriptors
 pub const VIRTIO_F_INDIRECT_DESC: u16 = 28;
 
-/* Support for avail_event and used_event fields */
+/// Support for avail_event and used_event fields
 pub const VIRTIO_F_EVENT_IDX: u16 = 29;
 
-/* Arbitrary descriptor layouts. */
+/// Arbitrary descriptor layouts.
 pub const VIRTIO_F_ANY_LAYOUT: u16 = 27;
 
+/// The maximum Queue Size value is 32768, see virtio 1.1, 2.6 Split Virtqueues
 pub const VIRTQ_SIZE_MAX: u16 = 1 << 15;
 
+/// A buffer descriptor contains the address, length (in bytes) of the buffer
+/// provided by the guest.
 #[repr(C, packed)]
 pub struct VirtqDesc {
     pub addr: u64,
@@ -45,18 +51,29 @@ pub struct VirtqDesc {
     pub flags: u16,
     pub next: u16,
 }
-
+/// An entry that is put in the used_ring of a Virtq by the host.
 #[repr(C, packed)]
 pub struct VirtqUsedElem {
+    /// Index of start of used descriptor chain.
     pub id: u32,
+    /// Total length of the descriptor chain which was written to.
     pub len: u32,
 }
 
+/// A Virtq contains queued guest IO requests.
+///
+/// We use the parameter `T` to differentiate whether it is a host virtual address
+/// or a guest physical address. If `T` is `usize`, it is a host virtual address.
+/// If `T` is `u64`, it is a guest physical address.
 #[derive(Debug, Clone)]
 pub struct Virtq<T> {
+    /// queue size
     pub num: u32,
+    /// address of buffer descriptors provided by the guest
     pub desc: T,
+    /// address of the available ring
     pub avail: T,
+    /// address of the used ring
     pub used: T,
 }
 
@@ -178,6 +195,26 @@ impl Virtq<usize> {
     }
 }
 
+/// Spawns a thread to collect notifications from the guest to handle IO requests.
+///
+/// For different types of devices, what the manager
+/// needs to do is basically the same: pick up a descriptor index from the
+/// available ring and find all the buffers, read/write the buffer and then put
+/// the descriptor into the used ring, but how the manager read and write
+/// depends on the type of device. Thus a device needs to provide a handler
+/// to specify what the manager should do when a new descriptor chain is found.
+///
+/// The parameter `mut handler: impl VirtqDescHandle` in new() is an object
+/// responsible for handling new descriptors. It implements the `VirtqDescHandle`
+/// trait, which has the `handle_desc_chain` method. Note that `handler` is
+/// marked as mutable, because this handler might have internal states and
+/// handling descriptors might change its internal states.
+///
+/// Let's use `NetTxDescHandler` in net.rs as an example. This type contains
+/// a pointer to a vmnet interface and implements the `VirtqDescHandle` trait.
+/// What its `handle_desc_chain` do is collecting all the output network buffers
+/// provided by the guest OS and then delivering them to the vmnet interface.
+
 pub struct VirtqManager {
     pub name: String,
     pub qnum_max: u32,
@@ -187,6 +224,8 @@ pub struct VirtqManager {
     pub virtq_sender: VirtqSender,
 }
 
+/// A trait that specifies what the VirtqManager should do when a new buffer, or
+/// a descriptor chain is received.
 pub trait VirtqDescHandle {
     fn handle_desc_chain(
         &mut self,
