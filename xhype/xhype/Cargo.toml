@@ -16,7 +16,7 @@ rand = "0.7.3"
 crossbeam-channel = "0.4.3"
 
 [dev-dependencies]
-simplelog = "0.8.0"
+flexi_logger = "0.15.10"
 
 [[example]]
 name = "xhype_linux"

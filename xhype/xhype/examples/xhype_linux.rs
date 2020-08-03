@@ -6,11 +6,12 @@ This example shows how to use xhype to boot Linux.
 Necessary environment variables:
     KN_PATH:    complete path to Linux kernel image,
     CMD_Line:   Linux kernel command line,
-    LOG_FILE:   path to log file
 
 Optional environment variables:
     RD_PATH:    complete path to a ramdisk file
-    LOG_LEVEL:   xhype log level: trace, debug, info, warn, error, none
+    RUST_LOG:   log level: trace, debug, info, warn, error, none; see
+                https://docs.rs/flexi_logger/0.15.10/flexi_logger/struct.LogSpecification.html for details.
+    LOG_DIR:    directory to save log files
     XHYPE_UNKNOWN_PORT: policy regarding guests' access to unknown IO ports
     XHYPE_UNKNOWN_MSR: policy regarding guests' access to unknown MSRs
 
@@ -48,10 +49,8 @@ Suggestions:
 kill the program. So to kill it, run `killall xhype_linux` in another terminal.
 !*/
 
-use simplelog::{Config, LevelFilter, WriteLogger};
 use std::collections::HashSet;
 use std::env;
-use std::fs::File;
 use std::sync::Arc;
 use xhype::consts::*;
 use xhype::err::Error;
@@ -137,18 +136,12 @@ fn boot_linux() {
 }
 
 fn main() {
-    let loglevel = match std::env::var("LOG_LEVEL").unwrap_or_default().as_ref() {
-        "off" | "none" => LevelFilter::Off,
-        "error" => LevelFilter::Error,
-        "warn" => LevelFilter::Warn,
-        "info" => LevelFilter::Info,
-        "debug" => LevelFilter::Debug,
-        "trace" => LevelFilter::Trace,
-        _ => LevelFilter::Error,
-    };
-    if loglevel != LevelFilter::Off {
-        let log_file = std::env::var("LOG_FILE").expect("no log file path provided");
-        WriteLogger::init(loglevel, Config::default(), File::create(log_file).unwrap()).unwrap();
+    if let Ok(directory) = std::env::var("LOG_DIR") {
+        flexi_logger::Logger::with_env()
+            .log_to_file()
+            .directory(directory)
+            .start()
+            .unwrap();
     }
     boot_linux();
 }
