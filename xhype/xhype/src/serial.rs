@@ -2,13 +2,14 @@
 
 //https://www.freebsd.org/doc/en_US.ISO8859-1/articles/serial-uart/index.html
 
-use crate::utils::make_stdin_raw;
 use bitfield::bitfield;
 use crossbeam_channel::Sender;
+use libc::{cfmakeraw, tcgetattr, tcsetattr, termios, CLOCAL, STDIN_FILENO, TCSANOW};
 use log::*;
 use std::collections::VecDeque;
 use std::io::Read;
 use std::io::Write;
+use std::mem::{size_of, transmute};
 use std::sync::{Arc, RwLock};
 
 // offset 0x1, Interrupt Enable Register (IER)
@@ -110,7 +111,6 @@ impl Default for Lsr {
 
 // TO-DO: send interrupts
 
-#[derive(Debug)]
 pub struct Serial {
     ier: Ier, // 0x1, Interrupt Enable Register (IER)
     fcr: Fcr, // 0x2, write, FIFO Control Register (FCR)
@@ -122,14 +122,24 @@ pub struct Serial {
     scr: u8,  // 0x7, Scratch Register (SCR)
     divisor: u16,
     in_data: Arc<RwLock<VecDeque<u8>>>,
-    output_data: Vec<u8>,
     irq: u32,
     irq_sender: Sender<u32>,
+    termios_backup: termios,
 }
 
 impl Serial {
     pub fn new(irq: u32, irq_sender: Sender<u32>) -> Self {
         let in_data = Arc::new(RwLock::new(VecDeque::new()));
+
+        let termios_backup = unsafe {
+            let mut old: termios = transmute([0u8; size_of::<termios>()]);
+            tcgetattr(STDIN_FILENO, &mut old);
+            let mut new_termios = old.clone();
+            cfmakeraw(&mut new_termios);
+            new_termios.c_cflag |= CLOCAL;
+            tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+            old
+        };
         let r = Serial {
             ier: Ier::default(),
             fcr: Fcr::default(),
@@ -141,9 +151,9 @@ impl Serial {
             scr: 0,
             divisor: 0,
             in_data: in_data.clone(),
-            output_data: Vec::new(),
             irq,
             irq_sender: irq_sender.clone(),
+            termios_backup,
         };
         std::thread::Builder::new()
             .name(format!("serial thread irq {}", irq))
@@ -153,7 +163,6 @@ impl Serial {
     }
 
     fn input_loop(irq: u32, irq_sender: Sender<u32>, in_data: Arc<RwLock<VecDeque<u8>>>) {
-        make_stdin_raw();
         loop {
             let stdin = std::io::stdin();
             let mut handle = stdin.lock();
@@ -240,6 +249,14 @@ impl Serial {
             6 => self.msr = value,
             7 => self.scr = value,
             _ => unreachable!("offset {}, value = {:b}", offset, value),
+        }
+    }
+}
+
+impl Drop for Serial {
+    fn drop(&mut self) {
+        unsafe {
+            tcsetattr(STDIN_FILENO, TCSANOW, &self.termios_backup);
         }
     }
 }
