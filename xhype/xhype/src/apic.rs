@@ -1,5 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+/*!
+Emulates a local APIC (Advanced Programmable Interrupt Controller)
+*/
+
 // to do: NMI, Spurious-Interrupt Vector
 
 use crate::consts::msr::*;
@@ -82,12 +86,37 @@ fn tmr_offset_vec(vector: u8) -> usize {
     OFFSET_TMR + (vector as usize / 32) * 0x10
 }
 
+/**
+    Represents a local APIC
+
+    Apple's Hypervisor Framework does not support APIC virtualization. One
+    possible reason is Apple actually hides this feature from framework users,
+    because Apple needs this feature to implement scheduling. To be more specific,
+    A VCPU of this framework is mapped to a pthread and it is scheduled by the macOS
+    kernel. Therefore the macOS kernel needs to send interrupts to the VM such that
+    a physical CPU could exit from VMX non-root mode and be used by the macOS kernel
+    to execute other threads. So the APIC virtualization is already used by the
+    framework and we have no way but to emulate the APIC by ourselves.
+
+    The current implementation of APIC timer is based on VMX Preemption timer.
+    See Intel SDM 25.5.1. When a guest thread starts, its local APIC's `next_timer`
+    is first examined. If it is `Some(dead_line)`, then `vcpu.run_until(dead_line)` is called and when
+    the `dead_line` reached, a vm-exit of`VMX_REASON_VMX_TIMER_EXPIRED` is generated and
+    now we know we should fire a timer interrupt to the VCPU. See the comments in `fn run_on_inner`
+    of `struct GuestThread` in `lib.rs`.
+*/
 pub struct Apic {
+    /// apic id
     pub id: u32,
+    /// the value stored in the MSR IA32_APIC_BASE, see Intel Manual Vol.3 Figure 10-26.
     pub msr_apic_base: u64,
+    /// a virtual memory page of the host that is mapped to the guest's apic page, which
+    /// is usually located at physical memory address 0xfee00000 of the guest.
     pub apic_page: MachVMBlock,
     pending_err: u32,
     frequency: u64,
+    /// The time when the next APIC timer interrupt should be fired. This time is
+    /// measured in mach_absolute_time unit, see Apple's [doc](https://developer.apple.com/documentation/kernel/1462446-mach_absolute_time). `None` represents the apic timer is disabled.
     pub next_timer: Option<u64>,
     timer_period: u64,
     isr_vec: Vec<u8>,
