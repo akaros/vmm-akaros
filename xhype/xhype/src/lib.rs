@@ -270,9 +270,55 @@ impl GuestThread {
         let mut last_ept_gpa = 0;
         let mut ept_count = 0;
         loop {
+            /*
+            This is the way we implement APIC timer. We setup a deadline and wait
+            for a `VMX_REASON_VMX_TIMER_EXPIRED`. See more details in the comments
+            in apic.rs.
+
+            Notice that in the Intel's manual, VMX preemption timer loads a value
+            from VMX-preemption timer-value field, which represents a timer interval,
+            and then count down until 0. However the function vcpu.run_until accepts
+            a deadline and the Hypervisor framework calculates the correct time
+            interval for us.
+            */
             if let Some(deadline) = self.apic.next_timer {
                 vcpu.run_until(deadline)?;
             } else {
+                /*
+                According to Apple's doc(https://developer.apple.com/documentation/hypervisor/1441231-hv_vcpu_run),
+                it is recommended to use `hv_vcpu_run_until(HV_DEADLINE_FOREVER)`
+                instead of `hv_vcpu_run`. While in the doc `HV_DEADLINE_FOREVER`
+                is only available after macOS 11, but as I tested, it still
+                works on macOS 10.15.
+
+                Why we do not use `vcpu.run()`, or hv_vcpu_run() ?
+                As I observed, hv_vcpu_run will cause the two following vm spurious exits:
+                1. VMX_REASON_EPT_VIOLATION
+                This is related to how Apple manages EPT tables. `hv_vm_map` only
+                remembers which block of host virtual memory should
+                mapped to which block of guest physical memory, but it does NOT
+                really setup the EPT table. So When a EPT violation happens, in the macOS kernel
+                space, the Hypervisor framework will first check if the fault guest address
+                is mapped to some host address, if there is not, it returns this
+                vm exit back to user space. Otherwise, it sets up the EPT entry.
+
+                So the important thing here is: what would the Hypervisor framework
+                do after it sets up the EPT entry:
+                    * If we use `vcpu.run`, then the function returns and we got a `VMX_REASON_EPT_VIOLATION`.
+                    * If we use `vcpu.run_until`, then the function goes back
+                    to VMX non-root mode and continue executing VM codes. We will
+                    not see a `VMX_REASON_EPT_VIOLATION`.
+
+                2. VMX_REASON_IRQ
+                See more details in the comment for `struct Apic` in `apic.rs`.
+                    * If we use `vcpu.run`, then the timer interrupts from the
+                    REAL apic timer will cause vm exit and eventually deliver
+                    the interrupt to user space.
+                    * If we use `vcpu.run_until`, then those interrupts will be
+                    handled by the Hypervisor framework itself and as a user-space
+                    program, xhype will not see those `VMX_REASON_IRQ`.
+
+                */
                 vcpu.run_until(u64::MAX)?;
             }
             let reason = vcpu.read_vmcs(VMCS_RO_EXIT_REASON)?;
