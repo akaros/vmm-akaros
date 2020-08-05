@@ -97,13 +97,13 @@ pub enum PolicyList<T> {
 pub struct VirtualMachine {
     pub(crate) mem_space: RwLock<MemSpace>,
     cores: u32,
-    pub(crate) low_mem: Option<RwLock<MachVMBlock>>, // memory below 4GiB
+    pub low_mem: Option<RwLock<MachVMBlock>>, // memory below 4GiB
     pub(crate) high_mem: RwLock<Vec<MachVMBlock>>,
     pub(crate) virtio_mmio_devices: Vec<Mutex<VirtioMmioDev>>,
     // serial ports
     pub(crate) com1: Mutex<Serial>,
     pub(crate) ioapic: Arc<RwLock<IoApic>>,
-    pub(crate) vector_senders: Arc<Mutex<Option<Vec<Sender<u8>>>>>,
+    pub vector_senders: Arc<Mutex<Option<Vec<Sender<u8>>>>>,
     pub(crate) vcpu_ids: Arc<RwLock<Vec<u32>>>,
     pub(crate) rtc: RwLock<Rtc>,
     pub pci_bus: Mutex<PciBus>,
