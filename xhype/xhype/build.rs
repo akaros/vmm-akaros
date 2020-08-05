@@ -5,9 +5,6 @@ fn main() {
     cc::Build::new().file("c_src/utils.c").compile("utils");
     cc::Build::new().file("c_src/hlt.s").compile("hlt");
     cc::Build::new()
-        .file("c_src/serial_c.c")
-        .compile("serial_c");
-    cc::Build::new()
         .file("c_src/vmnet.m")
         .compile("virtio-vmnet");
 
