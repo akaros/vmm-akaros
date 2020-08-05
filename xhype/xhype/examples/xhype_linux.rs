@@ -49,58 +49,17 @@ Suggestions:
 kill the program. So to kill it, run `killall xhype_linux` in another terminal.
 !*/
 
-use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 use xhype::consts::*;
 use xhype::err::Error;
+use xhype::utils::{parse_msr_policy, parse_port_policy};
 use xhype::virtio::VirtioDevice;
-use xhype::{linux, MsrPolicy, PolicyList, PortPolicy, VMManager};
+use xhype::{linux, VMManager};
 
 fn boot_linux() {
-    let mut port_policy = PortPolicy::AllOne;
-    let mut port_list = PolicyList::Except(HashSet::new());
-    if let Ok(policy) = std::env::var("XHYPE_UNKNOWN_PORT") {
-        let parts: Vec<&str> = policy.split(';').collect();
-        if parts.len() == 3 {
-            port_policy = match parts[0] {
-                "random" => PortPolicy::Random,
-                "allone" => PortPolicy::AllOne,
-                _ => panic!("unknown policy: {}", policy),
-            };
-            let set = parts[2]
-                .split(',')
-                .map(|n| u16::from_str_radix(n, 16).unwrap_or(0))
-                .collect();
-            port_list = match parts[1] {
-                "apply" => PolicyList::Apply(set),
-                "except" => PolicyList::Except(set),
-                _ => panic!("unknown policy: {}", policy),
-            }
-        }
-    }
-    let mut msr_policy = MsrPolicy::GP;
-    let mut msr_list = PolicyList::Except(HashSet::new());
-    if let Ok(policy) = std::env::var("XHYPE_UNKNOWN_MSR") {
-        let parts: Vec<&str> = policy.split(';').collect();
-        if parts.len() == 3 {
-            msr_policy = match parts[0] {
-                "random" => MsrPolicy::Random,
-                "allone" => MsrPolicy::AllOne,
-                "gp" => MsrPolicy::GP,
-                _ => panic!("unknown policy: {}", policy),
-            };
-            let set = parts[2]
-                .split(',')
-                .map(|n| u32::from_str_radix(n, 16).unwrap_or(0))
-                .collect();
-            msr_list = match parts[1] {
-                "apply" => PolicyList::Apply(set),
-                "except" => PolicyList::Except(set),
-                _ => panic!("unknown policy: {}", policy),
-            }
-        }
-    }
+    let (port_policy, port_list) = parse_port_policy();
+    let (msr_policy, msr_list) = parse_msr_policy();
     let low_mem_size = Some(100 * MiB);
     let memory_size = 1 * GiB;
     let vmm = VMManager::new().unwrap();

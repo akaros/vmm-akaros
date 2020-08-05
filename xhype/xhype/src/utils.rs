@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
+use crate::{MsrPolicy, PolicyList, PortPolicy};
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::ptr::null_mut;
@@ -58,6 +60,100 @@ extern "C" {
     fn mach_absolute_time() -> u64;
     fn mach_timebase(numer: *mut u32, denom: *mut u32) -> bool;
     fn make_stdin_raw_c();
+}
+
+/**
+Parse the port policy from environment variable `XHYPE_UNKNOWN_PORT`
+
+format: `[random|allone];[apply|except];[list of port numbers in hex]`
+
+examples:
+
+* `allone;except;`
+
+This is the default policy: xhype returns 0xff, 0xffff, or 0xffffffff
+(depending on the size) to the guest if an unknown port is accessed
+
+* `random;apply;21,a1,60`
+
+xhype returns a random number to the guest if the guest reads from
+port 0x21, 0xa1, or 0x60. For any other ports that xhype does not
+know how to handle, the whole program stops.
+
+* `allone;except;21,a1,60`
+
+xhype returns `0xff`, `0xffff`, or `0xffffffff` (depending on the size) to
+the guest if an unknown port is accessed, except port 0x20, 0xa1, and
+0x60. For these three ports, xhype stops.
+*/
+pub fn parse_port_policy() -> (PortPolicy, PolicyList<u16>) {
+    let mut port_policy = PortPolicy::AllOne;
+    let mut port_list = PolicyList::Except(HashSet::new());
+    if let Ok(policy) = std::env::var("XHYPE_UNKNOWN_PORT") {
+        let parts: Vec<&str> = policy.split(';').collect();
+        if parts.len() == 3 {
+            port_policy = match parts[0] {
+                "random" => PortPolicy::Random,
+                "allone" => PortPolicy::AllOne,
+                _ => panic!("unknown policy: {}", policy),
+            };
+            let set = parts[2]
+                .split(',')
+                .map(|n| u16::from_str_radix(n, 16).unwrap_or(0))
+                .collect();
+            port_list = match parts[1] {
+                "apply" => PolicyList::Apply(set),
+                "except" => PolicyList::Except(set),
+                _ => panic!("unknown policy: {}", policy),
+            }
+        }
+    }
+    (port_policy, port_list)
+}
+
+/**
+Parse the port policy from environment variable `XHYPE_UNKNOWN_MSR`
+
+format: `[random|allone|gp];[apply|except];[list of MSRs]`
+
+examples:
+
+* `gp;except;`
+
+This is the default policy: xhype injects a general protection fault
+if an unknown MSR is accessed.
+
+* `random;apply;64e,64d`
+
+xhype returns a random value to the guest if MSR `64e` or `64d` is accessed
+and xhype does not known how to handle it. Otherwise xhype handles
+the request or stops.
+*/
+
+pub fn parse_msr_policy() -> (MsrPolicy, PolicyList<u32>) {
+    let mut msr_policy = MsrPolicy::GP;
+    let mut msr_list = PolicyList::Except(HashSet::new());
+    if let Ok(policy) = std::env::var("XHYPE_UNKNOWN_MSR") {
+        let parts: Vec<&str> = policy.split(';').collect();
+        if parts.len() == 3 {
+            msr_policy = match parts[0] {
+                "random" => MsrPolicy::Random,
+                "allone" => MsrPolicy::AllOne,
+                "gp" => MsrPolicy::GP,
+                _ => panic!("unknown policy: {}", policy),
+            };
+            let set = parts[2]
+                .split(',')
+                .map(|n| u32::from_str_radix(n, 16).unwrap_or(0))
+                .collect();
+            msr_list = match parts[1] {
+                "apply" => PolicyList::Apply(set),
+                "except" => PolicyList::Except(set),
+                _ => panic!("unknown policy: {}", policy),
+            }
+        }
+    }
+    (msr_policy, msr_list)
 }
 
 #[cfg(test)]
