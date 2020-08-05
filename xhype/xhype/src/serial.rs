@@ -134,10 +134,12 @@ impl Serial {
         let termios_backup = unsafe {
             let mut old: termios = transmute([0u8; size_of::<termios>()]);
             tcgetattr(STDIN_FILENO, &mut old);
-            let mut new_termios = old.clone();
-            cfmakeraw(&mut new_termios);
-            new_termios.c_cflag |= CLOCAL;
-            tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+            if std::env::var("STDIN_RAW") != Ok("False".to_string()) {
+                let mut new_termios = old.clone();
+                cfmakeraw(&mut new_termios);
+                new_termios.c_cflag |= CLOCAL;
+                tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+            }
             old
         };
         let r = Serial {
