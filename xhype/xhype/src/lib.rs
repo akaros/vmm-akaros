@@ -325,8 +325,10 @@ impl GuestThread {
             let rip = vcpu.read_reg(X86Reg::RIP)?;
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
             trace!(
-                "vm exit reason = {}, rip = {:x}, len = {}",
+                "vm exit reason = {}, cs = {:x}, cs base = {:x}, rip = {:x}, len = {}",
                 reason,
+                vcpu.read_reg(X86Reg::CS)?,
+                vcpu.read_vmcs(VMCS_GUEST_CS_BASE)?,
                 rip,
                 instr_len
             );
@@ -385,6 +387,9 @@ impl GuestThread {
                     let err_msg =
                         format!("handler for vm exit code 0x{:x} is not implemented", reason);
                     error!("{}", err_msg);
+                    if reason & (1 << 31) > 0 {
+                        vcpu.dump().unwrap();
+                    }
                     Err((reason, err_msg))?
                 }
             };
