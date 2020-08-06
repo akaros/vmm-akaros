@@ -255,6 +255,9 @@ impl GuestThread {
         vcpu.set_space(&self.vm.mem_space.read().unwrap())?;
         let result = self.run_on_inner(vcpu);
         vcpu.set_space(&DEFAULT_MEM_SPACE)?;
+        if result.is_err() {
+            vcpu.dump().unwrap();
+        }
         result
     }
 
@@ -325,8 +328,10 @@ impl GuestThread {
             let rip = vcpu.read_reg(X86Reg::RIP)?;
             let instr_len = vcpu.read_vmcs(VMCS_RO_VMEXIT_INSTR_LEN)?;
             trace!(
-                "vm exit reason = {}, rip = {:x}, len = {}",
+                "vm exit reason = {}, cs = {:x}, cs base = {:x}, rip = {:x}, len = {}",
                 reason,
+                vcpu.read_reg(X86Reg::CS)?,
+                vcpu.read_vmcs(VMCS_GUEST_CS_BASE)?,
                 rip,
                 instr_len
             );
@@ -372,10 +377,17 @@ impl GuestThread {
                         }
                         if ept_count > 10 {
                             let err_msg = format!(
-                                "EPT violation at {:x} for {} times",
-                                last_ept_gpa, ept_count
+                                "EPT violation at physical address {:x} for {} times, cs base = {:x}; linear addr = {:x} ",
+                                last_ept_gpa, ept_count, vcpu.read_vmcs(VMCS_GUEST_CS_BASE)?, vcpu.read_vmcs(VMCS_RO_GUEST_LIN_ADDR)?,
                             );
                             error!("{}", &err_msg);
+                            let qual = vcpu.read_vmcs(VMCS_RO_EXIT_QUALIFIC)?;
+                            debug!("{}", vmexit::ept_qual_description(qual));
+                            let linear_addr = vcpu.read_vmcs(VMCS_RO_GUEST_LIN_ADDR)?;
+                            // the following instruction may cause segment fault.
+                            let simulate_physical_addr =
+                                unsafe { vmexit::emulate_paging(vcpu, self, linear_addr) };
+                            debug!("emulated paging result: {:x?}", simulate_physical_addr);
                             return Err((reason, err_msg))?;
                         }
                     }
@@ -385,6 +397,9 @@ impl GuestThread {
                     let err_msg =
                         format!("handler for vm exit code 0x{:x} is not implemented", reason);
                     error!("{}", err_msg);
+                    if reason & (1 << 31) > 0 {
+                        vcpu.dump().unwrap();
+                    }
                     Err((reason, err_msg))?
                 }
             };

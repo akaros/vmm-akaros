@@ -32,6 +32,7 @@ pub mod vmx;
 use crate::consts::msr::*;
 use crate::err::Error;
 use ffi::*;
+use log::debug;
 use vmx::*;
 
 #[inline]
@@ -200,167 +201,167 @@ impl VCPU {
     }
 
     pub fn dump(&self) -> Result<(), Error> {
-        println!(
+        debug!(
             "VMCS_CTRL_PIN_BASED: {:x}",
             self.read_vmcs(VMCS_CTRL_PIN_BASED)?
         );
-        println!(
+        debug!(
             "VMCS_CTRL_CPU_BASED: {:x}",
             self.read_vmcs(VMCS_CTRL_CPU_BASED)?
         );
-        println!(
+        debug!(
             "VMCS_CTRL_CPU_BASED2: {:x}",
             self.read_vmcs(VMCS_CTRL_CPU_BASED2)?
         );
-        println!(
+        debug!(
             "VMCS_CTRL_VMENTRY_CONTROLS: {:x}",
             self.read_vmcs(VMCS_CTRL_VMENTRY_CONTROLS)?
         );
-        println!(
+        debug!(
             "VMCS_CTRL_EXC_BITMAP: {:x}",
             self.read_vmcs(VMCS_CTRL_EXC_BITMAP)?
         );
-        println!(
+        debug!(
             "VMCS_CTRL_CR0_MASK: {:x}",
             self.read_vmcs(VMCS_CTRL_CR0_MASK)?
         );
-        println!(
+        debug!(
             "VMCS_CTRL_CR0_SHADOW: {:x}",
             self.read_vmcs(VMCS_CTRL_CR0_SHADOW)?
         );
-        println!(
+        debug!(
             "VMCS_CTRL_CR4_MASK: {:x}",
             self.read_vmcs(VMCS_CTRL_CR4_MASK)?
         );
-        println!(
+        debug!(
             "VMCS_CTRL_CR4_SHADOW: {:x}",
             self.read_vmcs(VMCS_CTRL_CR4_SHADOW)?
         );
-        println!("VMCS_GUEST_CS: {:x}", self.read_vmcs(VMCS_GUEST_CS)?);
-        println!(
+        debug!("VMCS_GUEST_CS: {:x}", self.read_vmcs(VMCS_GUEST_CS)?);
+        debug!(
             "VMCS_GUEST_CS_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_CS_LIMIT)?
         );
-        println!("VMCS_GUEST_CS_AR: {:x}", self.read_vmcs(VMCS_GUEST_CS_AR)?);
-        println!(
+        debug!("VMCS_GUEST_CS_AR: {:x}", self.read_vmcs(VMCS_GUEST_CS_AR)?);
+        debug!(
             "VMCS_GUEST_CS_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_CS_BASE)?
         );
-        println!("VMCS_GUEST_DS: {:x}", self.read_vmcs(VMCS_GUEST_DS)?);
-        println!(
+        debug!("VMCS_GUEST_DS: {:x}", self.read_vmcs(VMCS_GUEST_DS)?);
+        debug!(
             "VMCS_GUEST_DS_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_DS_LIMIT)?
         );
-        println!("VMCS_GUEST_DS_AR: {:x}", self.read_vmcs(VMCS_GUEST_DS_AR)?);
-        println!(
+        debug!("VMCS_GUEST_DS_AR: {:x}", self.read_vmcs(VMCS_GUEST_DS_AR)?);
+        debug!(
             "VMCS_GUEST_DS_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_DS_BASE)?
         );
-        println!("VMCS_GUEST_ES: {:x}", self.read_vmcs(VMCS_GUEST_ES)?);
-        println!(
+        debug!("VMCS_GUEST_ES: {:x}", self.read_vmcs(VMCS_GUEST_ES)?);
+        debug!(
             "VMCS_GUEST_ES_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_ES_LIMIT)?
         );
-        println!("VMCS_GUEST_ES_AR: {:x}", self.read_vmcs(VMCS_GUEST_ES_AR)?);
-        println!(
+        debug!("VMCS_GUEST_ES_AR: {:x}", self.read_vmcs(VMCS_GUEST_ES_AR)?);
+        debug!(
             "VMCS_GUEST_ES_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_ES_BASE)?
         );
-        println!("VMCS_GUEST_FS: {:x}", self.read_vmcs(VMCS_GUEST_FS)?);
-        println!(
+        debug!("VMCS_GUEST_FS: {:x}", self.read_vmcs(VMCS_GUEST_FS)?);
+        debug!(
             "VMCS_GUEST_FS_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_FS_LIMIT)?
         );
-        println!("VMCS_GUEST_FS_AR: {:x}", self.read_vmcs(VMCS_GUEST_FS_AR)?);
-        println!(
+        debug!("VMCS_GUEST_FS_AR: {:x}", self.read_vmcs(VMCS_GUEST_FS_AR)?);
+        debug!(
             "VMCS_GUEST_FS_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_FS_BASE)?
         );
-        println!("VMCS_GUEST_GS: {:x}", self.read_vmcs(VMCS_GUEST_GS)?);
-        println!(
+        debug!("VMCS_GUEST_GS: {:x}", self.read_vmcs(VMCS_GUEST_GS)?);
+        debug!(
             "VMCS_GUEST_GS_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_GS_LIMIT)?
         );
-        println!("VMCS_GUEST_GS_AR: {:x}", self.read_vmcs(VMCS_GUEST_GS_AR)?);
-        println!(
+        debug!("VMCS_GUEST_GS_AR: {:x}", self.read_vmcs(VMCS_GUEST_GS_AR)?);
+        debug!(
             "VMCS_GUEST_GS_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_GS_BASE)?
         );
-        println!("VMCS_GUEST_SS: {:x}", self.read_vmcs(VMCS_GUEST_SS)?);
-        println!(
+        debug!("VMCS_GUEST_SS: {:x}", self.read_vmcs(VMCS_GUEST_SS)?);
+        debug!(
             "VMCS_GUEST_SS_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_SS_LIMIT)?
         );
-        println!("VMCS_GUEST_SS_AR: {:x}", self.read_vmcs(VMCS_GUEST_SS_AR)?);
-        println!(
+        debug!("VMCS_GUEST_SS_AR: {:x}", self.read_vmcs(VMCS_GUEST_SS_AR)?);
+        debug!(
             "VMCS_GUEST_SS_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_SS_BASE)?
         );
-        println!("VMCS_GUEST_TR: {:x}", self.read_vmcs(VMCS_GUEST_TR)?);
-        println!(
+        debug!("VMCS_GUEST_TR: {:x}", self.read_vmcs(VMCS_GUEST_TR)?);
+        debug!(
             "VMCS_GUEST_TR_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_TR_LIMIT)?
         );
-        println!("VMCS_GUEST_TR_AR: {:x}", self.read_vmcs(VMCS_GUEST_TR_AR)?);
-        println!(
+        debug!("VMCS_GUEST_TR_AR: {:x}", self.read_vmcs(VMCS_GUEST_TR_AR)?);
+        debug!(
             "VMCS_GUEST_TR_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_TR_BASE)?
         );
-        println!("VMCS_GUEST_LDTR: {:x}", self.read_vmcs(VMCS_GUEST_LDTR)?);
-        println!(
+        debug!("VMCS_GUEST_LDTR: {:x}", self.read_vmcs(VMCS_GUEST_LDTR)?);
+        debug!(
             "VMCS_GUEST_LDTR_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_LDTR_LIMIT)?
         );
-        println!(
+        debug!(
             "VMCS_GUEST_LDTR_AR: {:x}",
             self.read_vmcs(VMCS_GUEST_LDTR_AR)?
         );
-        println!(
+        debug!(
             "VMCS_GUEST_LDTR_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_LDTR_BASE)?
         );
-        println!(
+        debug!(
             "VMCS_GUEST_GDTR_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_GDTR_BASE)?
         );
-        println!(
+        debug!(
             "VMCS_GUEST_GDTR_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_GDTR_LIMIT)?
         );
-        println!(
+        debug!(
             "VMCS_GUEST_IDTR_LIMIT: {:x}",
             self.read_vmcs(VMCS_GUEST_IDTR_LIMIT)?
         );
-        println!(
+        debug!(
             "VMCS_GUEST_IDTR_BASE: {:x}",
             self.read_vmcs(VMCS_GUEST_IDTR_BASE)?
         );
-        println!(
+        debug!(
             "VMCS_GUEST_IA32_EFER: {:x}",
             self.read_vmcs(VMCS_GUEST_IA32_EFER)?
         );
-        println!("RIP: {:x}", self.read_reg(X86Reg::RIP)?);
-        println!("RFLAGS: {:x}", self.read_reg(X86Reg::RFLAGS)?);
-        println!("RAX: {:x}", self.read_reg(X86Reg::RAX)?);
-        println!("RCX: {:x}", self.read_reg(X86Reg::RCX)?);
-        println!("RDX: {:x}", self.read_reg(X86Reg::RDX)?);
-        println!("RBX: {:x}", self.read_reg(X86Reg::RBX)?);
-        println!("RSI: {:x}", self.read_reg(X86Reg::RSI)?);
-        println!("RDI: {:x}", self.read_reg(X86Reg::RDI)?);
-        println!("RSP: {:x}", self.read_reg(X86Reg::RSP)?);
-        println!("RBP: {:x}", self.read_reg(X86Reg::RBP)?);
-        println!("R8: {:x}", self.read_reg(X86Reg::R8)?);
-        println!("R9: {:x}", self.read_reg(X86Reg::R9)?);
-        println!("R10: {:x}", self.read_reg(X86Reg::R10)?);
-        println!("R11: {:x}", self.read_reg(X86Reg::R11)?);
-        println!("R12: {:x}", self.read_reg(X86Reg::R12)?);
-        println!("R13: {:x}", self.read_reg(X86Reg::R13)?);
-        println!("R14: {:x}", self.read_reg(X86Reg::R14)?);
-        println!("R15: {:x}", self.read_reg(X86Reg::R15)?);
-        println!("CR0: {:x}", self.read_reg(X86Reg::CR0)?);
-        println!("CR2: {:x}", self.read_reg(X86Reg::CR2)?);
-        println!("CR3: {:x}", self.read_reg(X86Reg::CR3)?);
-        println!("CR4: {:x}", self.read_reg(X86Reg::CR4)?);
+        debug!("RIP: {:x}", self.read_reg(X86Reg::RIP)?);
+        debug!("RFLAGS: {:x}", self.read_reg(X86Reg::RFLAGS)?);
+        debug!("RAX: {:x}", self.read_reg(X86Reg::RAX)?);
+        debug!("RCX: {:x}", self.read_reg(X86Reg::RCX)?);
+        debug!("RDX: {:x}", self.read_reg(X86Reg::RDX)?);
+        debug!("RBX: {:x}", self.read_reg(X86Reg::RBX)?);
+        debug!("RSI: {:x}", self.read_reg(X86Reg::RSI)?);
+        debug!("RDI: {:x}", self.read_reg(X86Reg::RDI)?);
+        debug!("RSP: {:x}", self.read_reg(X86Reg::RSP)?);
+        debug!("RBP: {:x}", self.read_reg(X86Reg::RBP)?);
+        debug!("R8: {:x}", self.read_reg(X86Reg::R8)?);
+        debug!("R9: {:x}", self.read_reg(X86Reg::R9)?);
+        debug!("R10: {:x}", self.read_reg(X86Reg::R10)?);
+        debug!("R11: {:x}", self.read_reg(X86Reg::R11)?);
+        debug!("R12: {:x}", self.read_reg(X86Reg::R12)?);
+        debug!("R13: {:x}", self.read_reg(X86Reg::R13)?);
+        debug!("R14: {:x}", self.read_reg(X86Reg::R14)?);
+        debug!("R15: {:x}", self.read_reg(X86Reg::R15)?);
+        debug!("CR0: {:x}", self.read_reg(X86Reg::CR0)?);
+        debug!("CR2: {:x}", self.read_reg(X86Reg::CR2)?);
+        debug!("CR3: {:x}", self.read_reg(X86Reg::CR3)?);
+        debug!("CR4: {:x}", self.read_reg(X86Reg::CR4)?);
         Ok(())
     }
 

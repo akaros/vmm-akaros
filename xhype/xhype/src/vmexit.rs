@@ -64,6 +64,7 @@ fn pml4_index(addr: u64) -> u64 {
     (addr >> 39) & 0x1ff
 }
 
+/// only supports 4-level paging
 pub(crate) unsafe fn emulate_paging(
     vcpu: &VCPU,
     gth: &GuestThread,
@@ -74,31 +75,75 @@ pub(crate) unsafe fn emulate_paging(
         return Ok(linear_addr);
     }
     let cr3 = vcpu.read_reg(X86Reg::CR3)?;
+    trace!("linear address = {:x}, cr3 = {:x}", linear_addr, cr3);
+    trace!("linear address components: pml4_index = {:x}, pdpt_index = {:x}, pd_index = {:x}, pt_index = {:x}", pml4_index(linear_addr), pdpt_index(linear_addr), pd_index(linear_addr), pt_index(linear_addr));
+    for i in pml4_index(linear_addr).checked_sub(5).unwrap_or(0)
+        ..std::cmp::min(pml4_index(linear_addr) + 5, 512)
+    {
+        trace!(
+            "pml4 entry {} = {:x}",
+            i,
+            *gth.vm.read_guest_mem::<u64>((cr3 & !0xfff) & ADDR_MASK, i)
+        )
+    }
     let pml4e: u64 = *gth
         .vm
         .read_guest_mem((cr3 & !0xfff) & ADDR_MASK, pml4_index(linear_addr));
+    trace!("pml4e = {:x}", pml4e);
     if pml4e & PG_P == 0 {
         return Err("emulate_paging: page fault at pml4e".to_string())?;
+    }
+    for i in pdpt_index(linear_addr).checked_sub(5).unwrap_or(0)
+        ..std::cmp::min(pdpt_index(linear_addr) + 5, 512)
+    {
+        trace!(
+            "pdpt entry {} = {:x}",
+            i,
+            *gth.vm
+                .read_guest_mem::<u64>((pml4e & !0xfff) & ADDR_MASK, i)
+        )
     }
     let pdpte: u64 = *gth
         .vm
         .read_guest_mem((pml4e & !0xfff) & ADDR_MASK, pdpt_index(linear_addr));
+    trace!("pdpte = {:x}", pdpte);
     if pdpte & PG_P == 0 {
         return Err("emulate_paging: page fault at pdpte".to_string())?;
     } else if pdpte & PG_PS > 0 {
         return Ok((pdpte & !0x3fffffff) | (linear_addr & 0x3fffffff));
     }
+    for i in pd_index(linear_addr).checked_sub(5).unwrap_or(0)
+        ..std::cmp::min(pd_index(linear_addr) + 5, 512)
+    {
+        trace!(
+            "pd entry {} = {:x}",
+            i,
+            *gth.vm
+                .read_guest_mem::<u64>((pdpte & !0xfff) & ADDR_MASK, i)
+        )
+    }
     let pde: u64 = *gth
         .vm
         .read_guest_mem((pdpte & !0xfff) & ADDR_MASK, pd_index(linear_addr));
+    trace!("pde = {:x}", pde);
     if pde & PG_P == 0 {
         return Err("emulate_paging: page fault at pde".to_string())?;
     } else if pde & PG_PS > 0 {
         return Ok((pde & !0x1fffff) | (linear_addr & 0x1fffff));
     }
+    for i in pt_index(linear_addr).checked_sub(5).unwrap_or(0)
+        ..std::cmp::min(pt_index(linear_addr) + 5, 512)
+    {
+        trace!(
+            "pt entry {} = {:x}",
+            i,
+            *gth.vm.read_guest_mem::<u64>((pde & !0xfff) & ADDR_MASK, i)
+        )
+    }
     let pte: u64 = *gth
         .vm
         .read_guest_mem((pde & !0xfff) & ADDR_MASK, pt_index(linear_addr));
+    trace!("pte = {:x}", pte);
     if pte & PG_P == 0 {
         return Err("emulate_paging: page fault at pte".to_string())?;
     } else {
@@ -174,7 +219,13 @@ pub fn handle_cr(vcpu: &VCPU, _gth: &GuestThread) -> Result<HandleResult, Error>
                     let mut ctrl_entry = vcpu.read_vmcs(VMCS_CTRL_VMENTRY_CONTROLS)?;
                     ctrl_entry |= VMENTRY_GUEST_IA32E;
                     vcpu.write_vmcs(VMCS_CTRL_VMENTRY_CONTROLS, ctrl_entry)?;
+                    // to do: check more segment registers according to
+                    // 26.3.1.2 Checks on Guest Segment Registers
+                    vcpu.write_vmcs(VMCS_GUEST_TR_AR, 0x8b)?;
+                    warn!("long mode is turned on");
+                    vcpu.dump().unwrap();
                 } else if !long_mode && efer & EFER_LMA != 0 {
+                    warn!("long mode turned off");
                     efer &= !EFER_LMA;
                     vcpu.write_vmcs(VMCS_GUEST_IA32_EFER, efer)?;
                     let mut ctrl_entry = vcpu.read_vmcs(VMCS_CTRL_VMENTRY_CONTROLS)?;
@@ -475,7 +526,7 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
                 let v = gth.vm.rtc.read().unwrap().read();
                 vcpu.write_reg_16_low(X86Reg::RAX, v)?;
             } else {
-                unimplemented!();
+                error!("guest writes {:x} to RTC port {:x}", rax, RTC_PORT_DATA);
             }
         }
         COM1_BASE..=COM1_MAX => {
@@ -514,7 +565,7 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
                     pic_bus.write((rax & 0xffffffff) as u32);
                 } else {
                     // to do:
-                    unimplemented!("guest writes non-4-byte data to pci");
+                    error!("guest writes non-4-byte data to pci, data = {:x}, size = {}, port = {:x}, current cf8 = {:x}", rax, size, port, gth.vm.pci_bus.lock().unwrap().config_addr.0);
                 }
             }
         }
@@ -553,6 +604,25 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
 ////////////////////////////////////////////////////////////////////////////////
 // VMX_REASON_EPT_VIOLATION
 ////////////////////////////////////////////////////////////////////////////////
+
+pub fn ept_qual_description(qual: u64) -> String {
+    let mut description = format!(
+        "qual={:x}, read = {}, write = {}, instruction fetch = {}. valid = {}, page_walk = {}",
+        qual,
+        ept_read(qual),
+        ept_write(qual),
+        ept_instr_fetch(qual),
+        ept_valid(qual),
+        ept_page_walk(qual)
+    );
+
+    description
+    // format!("qual={:x}, read = {}, write = {}, instruction fetch = {}, valid = ")
+}
+
+pub fn ept_valid(qual: u64) -> bool {
+    qual & (1 << 7) > 0
+}
 
 pub fn ept_read(qual: u64) -> bool {
     qual & 1 > 0
