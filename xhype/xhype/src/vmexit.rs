@@ -475,7 +475,7 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
                 let v = gth.vm.rtc.read().unwrap().read();
                 vcpu.write_reg_16_low(X86Reg::RAX, v)?;
             } else {
-                unimplemented!();
+                error!("guest writes {:x} to RTC port {:x}", rax, RTC_PORT_DATA);
             }
         }
         COM1_BASE..=COM1_MAX => {
@@ -514,7 +514,7 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
                     pic_bus.write((rax & 0xffffffff) as u32);
                 } else {
                     // to do:
-                    unimplemented!("guest writes non-4-byte data to pci");
+                    error!("guest writes non-4-byte data to pci, data = {:x}, size = {}, port = {:x}, current cf8 = {:x}", rax, size, port, gth.vm.pci_bus.lock().unwrap().config_addr.0);
                 }
             }
         }
