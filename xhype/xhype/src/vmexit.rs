@@ -599,6 +599,25 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
 // VMX_REASON_EPT_VIOLATION
 ////////////////////////////////////////////////////////////////////////////////
 
+pub fn ept_qual_description(qual: u64) -> String {
+    let mut description = format!(
+        "qual={:x}, read = {}, write = {}, instruction fetch = {}. valid = {}, page_walk = {}",
+        qual,
+        ept_read(qual),
+        ept_write(qual),
+        ept_instr_fetch(qual),
+        ept_valid(qual),
+        ept_page_walk(qual)
+    );
+
+    description
+    // format!("qual={:x}, read = {}, write = {}, instruction fetch = {}, valid = ")
+}
+
+pub fn ept_valid(qual: u64) -> bool {
+    qual & (1 << 7) > 0
+}
+
 pub fn ept_read(qual: u64) -> bool {
     qual & 1 > 0
 }
