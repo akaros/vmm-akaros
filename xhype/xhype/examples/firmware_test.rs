@@ -62,7 +62,11 @@ fn load_firemware(
         0,
     );
 
-    let ctrl_cpu2 = gen_exec_ctrl(vmx_read_capability(VMXCap::CPU2)?, 0, 0);
+    let ctrl_cpu2 = gen_exec_ctrl(
+        vmx_read_capability(VMXCap::CPU2)?,
+        CPU_BASED2_RDTSCP | CPU_BASED2_INVPCID,
+        0,
+    );
     let ctrl_entry = gen_exec_ctrl(vmx_read_capability(VMXCap::Entry)?, 0, 0);
     let cr0 = X86_CR0_NE;
     let cr4 = X86_CR4_VMXE;
