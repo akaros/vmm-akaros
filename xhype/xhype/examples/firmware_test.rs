@@ -56,11 +56,11 @@ fn load_firemware(
     }
 
     let ctrl_pin = gen_exec_ctrl(vmx_read_capability(VMXCap::Pin)?, 0, 0);
-    let ctrl_cpu = gen_exec_ctrl(
-        vmx_read_capability(VMXCap::CPU)?,
-        CPU_BASED_HLT | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE,
-        0,
-    );
+    let mut ctrl_cpu_1_settings = CPU_BASED_HLT | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE;
+    if std::env::var("DEBUG_FIFO").is_ok() {
+        ctrl_cpu_1_settings |= CPU_BASED_MTF;
+    }
+    let ctrl_cpu = gen_exec_ctrl(vmx_read_capability(VMXCap::CPU)?, ctrl_cpu_1_settings, 0);
 
     let ctrl_cpu2 = gen_exec_ctrl(
         vmx_read_capability(VMXCap::CPU2)?,
