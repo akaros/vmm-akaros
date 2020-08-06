@@ -219,7 +219,13 @@ pub fn handle_cr(vcpu: &VCPU, _gth: &GuestThread) -> Result<HandleResult, Error>
                     let mut ctrl_entry = vcpu.read_vmcs(VMCS_CTRL_VMENTRY_CONTROLS)?;
                     ctrl_entry |= VMENTRY_GUEST_IA32E;
                     vcpu.write_vmcs(VMCS_CTRL_VMENTRY_CONTROLS, ctrl_entry)?;
+                    // to do: check more segment registers according to
+                    // 26.3.1.2 Checks on Guest Segment Registers
+                    vcpu.write_vmcs(VMCS_GUEST_TR_AR, 0x8b)?;
+                    warn!("long mode is turned on");
+                    vcpu.dump().unwrap();
                 } else if !long_mode && efer & EFER_LMA != 0 {
+                    warn!("long mode turned off");
                     efer &= !EFER_LMA;
                     vcpu.write_vmcs(VMCS_GUEST_IA32_EFER, efer)?;
                     let mut ctrl_entry = vcpu.read_vmcs(VMCS_CTRL_VMENTRY_CONTROLS)?;
