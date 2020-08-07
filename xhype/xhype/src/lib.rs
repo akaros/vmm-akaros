@@ -9,6 +9,7 @@ pub mod hv;
 pub mod ioapic;
 pub mod linux;
 pub mod mach;
+pub mod multiboot;
 pub mod pci;
 pub mod rtc;
 pub mod serial;
