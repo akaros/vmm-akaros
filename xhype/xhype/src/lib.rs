@@ -287,7 +287,7 @@ impl GuestThread {
             a deadline and the Hypervisor framework calculates the correct time
             interval for us.
             */
-            if let Some(deadline) = self.apic.next_timer {
+            if let Some(deadline) = self.apic.sched_timer {
                 vcpu.run_until(deadline)?;
             } else {
                 /*
@@ -384,7 +384,7 @@ impl GuestThread {
                     HandleResult::Resume
                 }
                 VMX_REASON_VMX_TIMER_EXPIRED => {
-                    debug_assert!(self.apic.next_timer.is_some());
+                    debug_assert!(self.apic.sched_timer.is_some());
                     self.apic.fire_timer_interrupt(vcpu);
                     HandleResult::Resume
                 }
