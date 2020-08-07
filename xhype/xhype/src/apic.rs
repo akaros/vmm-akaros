@@ -113,7 +113,7 @@ pub struct Apic {
     frequency: u64,
     /// The time when the next APIC timer interrupt should be fired. This time is
     /// measured in mach_absolute_time unit, see Apple's [doc](https://developer.apple.com/documentation/kernel/1462446-mach_absolute_time). `None` represents the apic timer is disabled.
-    pub next_timer: Option<u64>,
+    pub sched_timer: Option<u64>,
     timer_period: u64,
     isr_vec: Vec<u8>,
     // mach_timebase_info
@@ -146,7 +146,7 @@ impl Apic {
             id,
             pending_err: 0,
             frequency: crystal_freq,
-            next_timer: None,
+            sched_timer: None,
             timer_period: 0,
             isr_vec: Vec::new(),
             numer,
@@ -208,7 +208,7 @@ impl Apic {
     pub fn read(&self, offset: usize) -> u64 {
         // to do: add more checks
         if offset == OFFSET_CURR_COUNT {
-            if let Some(deadline) = self.next_timer {
+            if let Some(deadline) = self.sched_timer {
                 let init_count: u32 = self.apic_page.read(OFFSET_INIT_COUNT, 0);
                 let period = self.timer_period;
                 debug_assert_ne!(period, 0);
@@ -241,11 +241,11 @@ impl Apic {
             let period = self.ns_to_abs(period_ns);
             match lvt_timer_mode(lvt_timer) {
                 TIMER_ONE_SHOT => {
-                    self.next_timer = Some(mach_abs_time() + period);
+                    self.sched_timer = Some(mach_abs_time() + period);
                     self.timer_period = 0;
                 }
                 TIMER_PERIODIC => {
-                    self.next_timer = Some(mach_abs_time() + period);
+                    self.sched_timer = Some(mach_abs_time() + period);
                     self.timer_period = period;
                 }
                 TIMER_TCS_DDL => unimplemented!("tsc deadline not implemented"),
@@ -253,7 +253,7 @@ impl Apic {
             }
         } else {
             self.timer_period = 0;
-            self.next_timer = None;
+            self.sched_timer = None;
         }
     }
 
@@ -285,9 +285,9 @@ impl Apic {
 
         // set up the next timer interrupt
         if self.timer_period == 0 {
-            self.next_timer = None;
+            self.sched_timer = None;
         } else {
-            self.next_timer = Some(mach_abs_time() + self.timer_period);
+            self.sched_timer = Some(self.sched_timer.unwrap() + self.timer_period);
         }
     }
 
