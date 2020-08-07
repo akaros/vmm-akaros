@@ -69,6 +69,30 @@ such that the pthread running the VCPU could be stopped and managed by macOS ker
 scheduler. Again, using [hv_vcpu_run_until](https://developer.apple.com/documentation/hypervisor/3181548-hv_vcpu_run_until?language=objc), the framework itself will 
 handle this type of vm exit and will not deliver this vm exit to user space.
 
+### VM-Entry Controls for MSRs
+
+Both `VM-entry MSR-load count` and `VM-entry MSR-load address` of VMCS are not 
+available in Hypervisor Framework, instead, developers can use [ `hv_vcpu_enable_native_msr` ](https://developer.apple.com/documentation/hypervisor/1441240-hv_vcpu_enable_native_msr?language=objc) to add
+an MSR into VM-entry MSR-load area.
+
+### APIC Virtualization
+
+While Hypervisor framework provides [ `hv_vmx_vcpu_set_apic_address(hv_vcpuid_t vcpu, hv_gpaddr_t gpa)` ](https://developer.apple.com/documentation/hypervisor/1441053-hv_vmx_vcpu_set_apic_address?language=objc), 
+it is quite confusing whether `gpa` refers to `APIC-access address` or `Virtual-APIC address` . 
+As documented in Intel's manual, these two fields can be different. On the other 
+hand, it is observed that `APIC-register virtualization` and `Virtual-interrupt 
+delivery ` of ` Secondary Processor-Based VM-Execution Controls` are not supported in
+Hypervisor framework (tested on MacBook Pro (16-inch, 2019)). Thus xhype chose
+to emulate APIC.
+
+### VMCS fields controlled by Hypervisor framework
+
+The Hypervisor framework only exposes a subset of VMX to developers, for example, 
+APIC virtualization is not available. A simple method to test whether a VMCS field
+is available is: read that VMCS field with `hv_vmx_vcpu_read_vmcs` , if it returns
+`0x3f` , it means this field is not available. Note this trick is from experience
+not from Apple's documents.
+
 ## Known issues
 
 1. The emulation of IO APIC, local APIC, RTC, and PIC device is just minimal and needs further development.
