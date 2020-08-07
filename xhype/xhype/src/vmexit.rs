@@ -467,11 +467,11 @@ const RTC_PORT_DATA: u16 = 0x71;
 fn port_apply_policy(
     vcpu: &VCPU,
     gth: &GuestThread,
-    data_in: Option<u64>,
+    data_out: Option<u64>,
     size: u8,
     port: u16,
 ) -> Result<(), Error> {
-    if let Some(v) = data_in {
+    if let Some(v) = data_out {
         warn!("guest writes 0x{:x?} to unknown port: 0x{:x}", v, port);
     } else {
         let ret = match gth.vm.port_policy {
@@ -495,11 +495,11 @@ fn port_apply_policy(
 fn port_unknown(
     _vcpu: &VCPU,
     _gth: &GuestThread,
-    data_in: Option<u64>,
+    data_out: Option<u64>,
     _size: u8,
     port: u16,
 ) -> Result<HandleResult, Error> {
-    let err_msg = if let Some(v) = data_in {
+    let err_msg = if let Some(v) = data_out {
         format!("guest writes 0x{:x?} to unknown port: 0x{:x}", v, port)
     } else {
         format!("guest reads from unknown port: 0x{:x}", port)
@@ -570,29 +570,29 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
             }
         }
         _ => {
-            let data_in = if qual.is_in() {
+            let data_out = if qual.is_in() {
+                None
+            } else {
                 match size {
                     1 => Some(rax & 0xff),
                     2 => Some(rax & 0xffff),
                     4 => Some(rax & 0xffffffff),
                     _ => unreachable!(),
                 }
-            } else {
-                None
             };
             match &gth.vm.port_list {
                 PolicyList::Apply(set) => {
                     if set.contains(&port) {
-                        port_apply_policy(vcpu, gth, data_in, size, port)?;
+                        port_apply_policy(vcpu, gth, data_out, size, port)?;
                     } else {
-                        port_unknown(vcpu, gth, data_in, size, port)?;
+                        port_unknown(vcpu, gth, data_out, size, port)?;
                     }
                 }
                 PolicyList::Except(set) => {
                     if !set.contains(&port) {
-                        port_apply_policy(vcpu, gth, data_in, size, port)?;
+                        port_apply_policy(vcpu, gth, data_out, size, port)?;
                     } else {
-                        port_unknown(vcpu, gth, data_in, size, port)?;
+                        port_unknown(vcpu, gth, data_out, size, port)?;
                     }
                 }
             }
