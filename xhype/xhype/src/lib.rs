@@ -339,6 +339,26 @@ impl GuestThread {
                 instr_len
             );
             result = match reason {
+                VMX_REASON_EXC_NMI => {
+                    let info = vcpu.read_vmcs(VMCS_RO_VMEXIT_IRQ_INFO)?;
+                    let code = vcpu.read_vmcs(VMCS_RO_VMEXIT_IRQ_ERROR)?;
+                    let valid = (info >> 31) & 1 == 1;
+                    let nmi = (info >> 12) & 1 == 1;
+                    let e_type = (info >> 8) & 0b111;
+                    let vector = info & 0xf;
+                    warn!(
+                        "VMX_REASON_EXC_NMI, valid = {}, nmi = {}, type = {}, vector = {}, code = {:b}",
+                        valid, nmi, e_type, vector, code
+                    );
+                    if vector == 6 {
+                        warn!(
+                            "invalid opcode: {:02x?}, rip = {:x}",
+                            get_vmexit_instr(vcpu, self)?,
+                            vcpu.read_reg(X86Reg::RIP)?
+                        );
+                    }
+                    return Err(Error::Unhandled(reason, "unhandled exception".to_string()));
+                }
                 VMX_REASON_IRQ => {
                     /*
                     VMX_REASON_IRQ happens when IO APIC calls interrupt_vcpu(),
