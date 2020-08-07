@@ -89,14 +89,10 @@ fn tmr_offset_vec(vector: u8) -> usize {
 /**
     Represents a local APIC
 
-    Apple's Hypervisor Framework does not support APIC virtualization. One
-    possible reason is Apple actually hides this feature from framework users,
-    because Apple needs this feature to implement scheduling. To be more specific,
-    A VCPU of this framework is mapped to a pthread and it is scheduled by the macOS
-    kernel. Therefore the macOS kernel needs to send interrupts to the VM such that
-    a physical CPU could exit from VMX non-root mode and be used by the macOS kernel
-    to execute other threads. So the APIC virtualization is already used by the
-    framework and we have no way but to emulate the APIC by ourselves.
+    It is observed Apple's Hypervisor Framework does not `APIC-register virtualization`
+    and `Virtual-interrupt delivery ` of ` Secondary Processor-Based VM-Execution
+    Controls` (tested on MacBook Pro (16-inch, 2019)). Therefore xhype chose to
+    emulate a local APIC.
 
     The current implementation of APIC timer is based on VMX Preemption timer.
     See Intel SDM 25.5.1. When a guest thread starts, its local APIC's `next_timer`
