@@ -240,16 +240,17 @@ impl Apic {
             // Figure 10-10. Divide Configuration Register
             let dcr_value = (dcr & 0b11) | ((dcr & 0b1000) >> 1);
             let dcr_shift = (dcr_value + 1) & 0b111;
-            let interrupt_freq = (self.frequency >> dcr_shift) / init_count as u64;
-            let interval = self.ns_to_abs(1_000_000_000u64 / interrupt_freq);
+            let set_freq = self.frequency >> dcr_shift;
+            let period_ns = 1_000_000_000u64 * init_count as u64 / set_freq;
+            let period = self.ns_to_abs(period_ns);
             match lvt_timer_mode(lvt_timer) {
                 TIMER_ONE_SHOT => {
-                    self.next_timer = Some(mach_abs_time() + interval);
+                    self.next_timer = Some(mach_abs_time() + period);
                     self.timer_period = 0;
                 }
                 TIMER_PERIODIC => {
-                    self.next_timer = Some(mach_abs_time() + interval);
-                    self.timer_period = interval;
+                    self.next_timer = Some(mach_abs_time() + period);
+                    self.timer_period = period;
                 }
                 TIMER_TCS_DDL => unimplemented!("tsc deadline not implemented"),
                 _ => unreachable!(),
