@@ -34,6 +34,8 @@ use pci::PciBus;
 use rtc::Rtc;
 use serial::Serial;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::Read;
 use std::sync::{Arc, Mutex, RwLock};
 use virtio::{mmio::VirtioMmioDev, VirtioDevice};
 use vmexit::*;
@@ -363,6 +365,23 @@ impl GuestThread {
                 VMX_REASON_VMX_TIMER_EXPIRED => {
                     debug_assert!(self.apic.next_timer.is_some());
                     self.apic.fire_timer_interrupt(vcpu);
+                    HandleResult::Resume
+                }
+                VMX_REASON_MTF => {
+                    if let Ok(mtf_fifo) = std::env::var("DEBUG_FIFO") {
+                        println!(
+                            "cs_base = {:x}, rip = {:x}",
+                            vcpu.read_vmcs(VMCS_GUEST_CS_BASE)?,
+                            vcpu.read_reg(X86Reg::RIP)?
+                        );
+                        println!(
+                            "write any ONE byte to {} to continue, e.g. echo 'a' > {}",
+                            &mtf_fifo, &mtf_fifo
+                        );
+                        let mut f = File::open(&mtf_fifo).unwrap();
+                        let mut buf = [0u8];
+                        f.read_exact(&mut buf).unwrap();
+                    }
                     HandleResult::Resume
                 }
                 VMX_REASON_EPT_VIOLATION => {

@@ -22,6 +22,20 @@ KN_PATH=<path/to/bzImage> CMD_LINE="earlyprintk=serial console=tty tsc=unstable"
 
 `sudo` is required to create a macOS vmnet interface. See more details in the comments of `examples/xhype_linux.rs`
 
+### Environment variables
+
+* `STDIN_RAW` : set it to `False` to prevent xhype from changing stdin to a raw IO path
+* `DEBUG_FIFO` : an fifo used for send instructions to xhype when `VMX_REASON_MTF` happens
+
+#### Force a guest to exit after every instruction
+
+Currently xhype implement such single-step debugging by Monitor trap flag. To use it:
+
+1. Make an fifo: `mkfifo /path/to/fifo-debug`
+2. Set the environment variable: export DEBUG_FIFO=/path/to/fifo-debug
+3. Turn on `CPU_BASED_MTF` in `Primary Processor-Based VM-Execution Controls` . See an example in `fn load_firemware()` of `firmware.rs`
+4. Start xhype, the guest will be paused after every instruction. Open another terminal and write one byte to `/path/to/fifo-debug` to resume the VM, for example `echo 'a' > /path/to/fifo-debug` . 
+
 ## Docs
 
 Run `cargo doc && python3 -m http.server --directory target/doc` and then open [http://127.0.0.1:8000/xhype](http://127.0.0.1:8000/xhype) in the browser.
@@ -60,3 +74,4 @@ handle this type of vm exit and will not deliver this vm exit to user space.
 1. The emulation of IO APIC, local APIC, RTC, and PIC device is just minimal and needs further development.
 2. `docode.c` currently only supports `mov` instruction.
 3. We need a more sophisticated way to gracefully join the threads spawned for virtual hardware, including IO APIC and virtio queues.
+4. The implementation of single-step debugging based on Monitor trap flag does not take interrupts into consideration.

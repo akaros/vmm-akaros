@@ -56,11 +56,11 @@ fn load_firemware(
     }
 
     let ctrl_pin = gen_exec_ctrl(vmx_read_capability(VMXCap::Pin)?, 0, 0);
-    let ctrl_cpu = gen_exec_ctrl(
-        vmx_read_capability(VMXCap::CPU)?,
-        CPU_BASED_HLT | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE,
-        0,
-    );
+    let mut ctrl_cpu_1_settings = CPU_BASED_HLT | CPU_BASED_CR8_LOAD | CPU_BASED_CR8_STORE;
+    if std::env::var("DEBUG_FIFO").is_ok() {
+        ctrl_cpu_1_settings |= CPU_BASED_MTF;
+    }
+    let ctrl_cpu = gen_exec_ctrl(vmx_read_capability(VMXCap::CPU)?, ctrl_cpu_1_settings, 0);
 
     let ctrl_cpu2 = gen_exec_ctrl(
         vmx_read_capability(VMXCap::CPU2)?,
@@ -175,8 +175,9 @@ This example loads two blobs (can be the same file) to two address and set RIP t
 Optional Variables:
 * `LOG_DIR`: directory to save log files
 * `RUST_LOG`: log lovel
-* `STDIN_RAW`:set it to `False` for debug pursue
-*  `XHYPE_UNKNOWN_MSR` and `XHYPE_UNKNOWN_PORT`: see docs in `utils.rs`.
+* `STDIN_RAW`: set it to `False` for debug pursue
+* `XHYPE_UNKNOWN_MSR` and `XHYPE_UNKNOWN_PORT`: see docs in `utils.rs`.
+* `DEBUG_FIFO`: an fifo used for send instructions to xhype when `VMX_REASON_MTF` happens
 */
 fn main() {
     if let Ok(directory) = std::env::var("LOG_DIR") {
