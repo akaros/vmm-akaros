@@ -212,7 +212,18 @@ impl Apic {
     pub fn read(&self, offset: usize) -> u64 {
         // to do: add more checks
         if offset == OFFSET_CURR_COUNT {
-            unimplemented!("OFFSET_CURR_COUNT");
+            if let Some(deadline) = self.next_timer {
+                let init_count: u32 = self.apic_page.read(OFFSET_INIT_COUNT, 0);
+                let period = self.timer_period;
+                debug_assert_ne!(period, 0);
+                /* At the beginning of one period, curr_count = init
+                   At the end of one period, curr_count = 0
+                   deadline - mach_abs_time is the remaining time of one period
+                    (deadline - mach_abs_time)/period * init_count tells the curr_count
+                */
+                return init_count as u64 * (deadline.checked_sub(mach_abs_time()).unwrap_or(0))
+                    / period;
+            }
         };
         let mut result = self.apic_page.read::<u32>(offset, 0) as u64;
         if offset == OFFSET_ICR0 && self.x2mode() {
