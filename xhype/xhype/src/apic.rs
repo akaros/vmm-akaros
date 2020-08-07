@@ -212,7 +212,18 @@ impl Apic {
     pub fn read(&self, offset: usize) -> u64 {
         // to do: add more checks
         if offset == OFFSET_CURR_COUNT {
-            unimplemented!("OFFSET_CURR_COUNT");
+            if let Some(deadline) = self.next_timer {
+                let init_count: u32 = self.apic_page.read(OFFSET_INIT_COUNT, 0);
+                let period = self.timer_period;
+                debug_assert_ne!(period, 0);
+                /* At the beginning of one period, curr_count = init
+                   At the end of one period, curr_count = 0
+                   deadline - mach_abs_time is the remaining time of one period
+                    (deadline - mach_abs_time)/period * init_count tells the curr_count
+                */
+                return init_count as u64 * (deadline.checked_sub(mach_abs_time()).unwrap_or(0))
+                    / period;
+            }
         };
         let mut result = self.apic_page.read::<u32>(offset, 0) as u64;
         if offset == OFFSET_ICR0 && self.x2mode() {
@@ -229,16 +240,17 @@ impl Apic {
             // Figure 10-10. Divide Configuration Register
             let dcr_value = (dcr & 0b11) | ((dcr & 0b1000) >> 1);
             let dcr_shift = (dcr_value + 1) & 0b111;
-            let interrupt_freq = (self.frequency >> dcr_shift) / init_count as u64;
-            let interval = self.ns_to_abs(1_000_000_000u64 / interrupt_freq);
+            let set_freq = self.frequency >> dcr_shift;
+            let period_ns = 1_000_000_000u64 * init_count as u64 / set_freq;
+            let period = self.ns_to_abs(period_ns);
             match lvt_timer_mode(lvt_timer) {
                 TIMER_ONE_SHOT => {
-                    self.next_timer = Some(mach_abs_time() + interval);
+                    self.next_timer = Some(mach_abs_time() + period);
                     self.timer_period = 0;
                 }
                 TIMER_PERIODIC => {
-                    self.next_timer = Some(mach_abs_time() + interval);
-                    self.timer_period = interval;
+                    self.next_timer = Some(mach_abs_time() + period);
+                    self.timer_period = period;
                 }
                 TIMER_TCS_DDL => unimplemented!("tsc deadline not implemented"),
                 _ => unreachable!(),
