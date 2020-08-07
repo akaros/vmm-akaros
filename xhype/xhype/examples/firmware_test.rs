@@ -175,8 +175,9 @@ This example loads two blobs (can be the same file) to two address and set RIP t
 Optional Variables:
 * `LOG_DIR`: directory to save log files
 * `RUST_LOG`: log lovel
-* `STDIN_RAW`:set it to `False` for debug pursue
-*  `XHYPE_UNKNOWN_MSR` and `XHYPE_UNKNOWN_PORT`: see docs in `utils.rs`.
+* `STDIN_RAW`: set it to `False` for debug pursue
+* `XHYPE_UNKNOWN_MSR` and `XHYPE_UNKNOWN_PORT`: see docs in `utils.rs`.
+* `DEBUG_FIFO`: an fifo used for send instructions to xhype when `VMX_REASON_MTF` happens
 */
 fn main() {
     if let Ok(directory) = std::env::var("LOG_DIR") {
