@@ -114,6 +114,7 @@ impl Default for Lsr {
 pub struct Serial {
     ier: Ier, // 0x1, Interrupt Enable Register (IER)
     fcr: Fcr, // 0x2, write, FIFO Control Register (FCR)
+    #[allow(dead_code)]
     iir: Iir, // 0x2, read, Interrupt Identification Register
     lcr: Lcr, // 0x3, Line Control Register (LCR)
     mcr: Mcr, // 0x4, Modem Control Register (MCR)
