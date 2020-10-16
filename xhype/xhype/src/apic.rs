@@ -24,6 +24,7 @@ const OFFSET_TPR: usize = 0x80;
 const OFFSET_APR: usize = 0x90;
 const OFFSET_PPR: usize = 0xa0;
 const OFFSET_EOI: usize = 0xb0;
+#[allow(dead_code)]
 const OFFSET_RRD: usize = 0xc0; // Remote Read Register?
 const OFFSET_LDR: usize = 0xd0; // Logical Destination Register (LDR)
 const OFFSET_DFR: usize = 0xe0; // Destination Format Register, xapic only

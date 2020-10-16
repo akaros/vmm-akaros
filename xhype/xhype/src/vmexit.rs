@@ -606,7 +606,7 @@ pub fn handle_io(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Error> 
 ////////////////////////////////////////////////////////////////////////////////
 
 pub fn ept_qual_description(qual: u64) -> String {
-    let mut description = format!(
+    let description = format!(
         "qual={:x}, read = {}, write = {}, instruction fetch = {}. valid = {}, page_walk = {}",
         qual,
         ept_read(qual),
