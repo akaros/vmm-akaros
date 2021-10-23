@@ -41,6 +41,9 @@ fn boot_harvey() {
                 if header.section_name() == ".bootstrap" {
                     load_addr = Some(header.sh.addr() - header.sh.offset());
                 }
+                if header.section_name() == ".text.boot" {
+                    load_addr = Some(header.sh.addr() - header.sh.offset());
+                }
             }
         } else {
             panic!("{} is not a 64-bit elf file", &kn_path);

@@ -230,7 +230,7 @@ pub fn load_linux64(
             cmdline_size, cmd_line
         ))?;
     }
-    &high_mem[cmd_line_offset..(cmd_line_offset + cmd_line.len())]
+    let _  = &high_mem[cmd_line_offset..(cmd_line_offset + cmd_line.len())]
         .clone_from_slice(cmd_line.as_bytes());
     let cmd_line_base = high_mem.start + cmd_line_offset;
     bp.hdr.cmd_line_ptr = (cmd_line_base & 0xffffffff) as u32;
