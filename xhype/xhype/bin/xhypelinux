@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+set -x
+cargo build --example xhype_linux
+codesign -s - --entitlements app.entitlements --force ./target/debug/examples/xhype_linux
+KN_PATH=flashkernel CMD_LINE="earlyprintk=serial console=tty tsc=unstable" sudo -E target/debug/examples/xhype_linux

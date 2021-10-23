@@ -1,0 +1,25 @@
+#!/bin/bash
+export XHYPE_UNKNOWN_MSR="allone;except;"
+export STDIN_RAW=False
+export RUST_LOG="trace"
+export LOG_DIR="/tmp/xhype"
+#export DEBUG_FIFO=/tmp/f
+cargo build --example firmware_test
+RUST_LOG=trace F1=start.bin ADDR1=ffff0000 F2=start.bin ADDR2=76ff0000 RIP=fff0 target/debug/examples/firmware_test
+
+exit 0
+RUST_LOG=trace F1=bios16.bin ADDR1=76000000 F2=bios16.bin ADDR2=ff000000 RIP=fff0 target/debug/examples/firmware_test
+
+exit 0
+F1: path to the first blob
+ADDR1: guest physical address where the blob should be loaded
+F2 and ADDR2: similar to the two above
+RIP: Usually it should be set to fff0(no 0x prefix), because as default, the initial CS base is 0xffff0000, which add together to be 0xfffffff0.
+Optional Variables:
+
+LOG_DIR: directory to save log files
+RUST_LOG: log lovel
+STDIN_RAW:set it to False for debug pursue
+XHYPE_UNKNOWN_MSR and XHYPE_UNKNOWN_PORT: see docs in utils.rs.
+Build: 
+Run: 
