@@ -553,6 +553,13 @@ mod test {
     }
 
     #[test]
+    fn hv_mem_space_create_test() {
+        vm_create(0).unwrap();
+        let _ = MemSpace::create().unwrap();
+        vm_destroy().unwrap();
+    }
+
+    #[test]
     fn hv_mem_space_test() {
         vm_create(0).unwrap();
         let space1_id;
