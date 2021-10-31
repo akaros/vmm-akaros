@@ -189,7 +189,13 @@ impl VirtualMachine {
             match vm_self_region(trial_addr) {
                 Ok((start, size, info)) => {
                     if info.protection > 0 {
-                        mem_space.map(start, start, size, info.protection as u64)?;
+                        match mem_space.map(start, start, size, info.protection as u64) {
+                            Ok(()) => {}
+                            // TODO: figure out the failure reason.
+                            Err(e) => {
+                                error!("map host memory failed: start: {:x}, size: {:x}, protection: {:x}, error: {:?}", start, size, info.protection, e);
+                            }
+                        }
                     }
                     trial_addr = start + size;
                 }
