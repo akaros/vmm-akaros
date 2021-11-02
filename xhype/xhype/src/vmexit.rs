@@ -713,12 +713,19 @@ pub fn handle_cpuid(vcpu: &VCPU, gth: &GuestThread) -> Result<HandleResult, Erro
             edx = 0;
         }
         0xd => {
-            if (vmx_read_capability(VMXCap::CPU2)? >> 32) & CPU_BASED2_XSAVES_XRSTORS == 0 {
-                eax = 0;
-                ebx = 0;
-                ecx = 0;
-                edx = 0;
-            }
+            // TODO: handle XSAVE related vmexit
+            // if (vmx_read_capability(VMXCap::CPU2)? >> 32) & CPU_BASED2_XSAVES_XRSTORS == 0 {
+            //     eax = 0;
+            //     ebx = 0;
+            //     ecx = 0;
+            //     edx = 0;
+            // } else {
+            // }
+
+            eax = 0;
+            ebx = 0;
+            ecx = 0;
+            edx = 0;
         }
         0x4000_0000 => {
             // eax indicates the highest eax in Hypervisor leaf
