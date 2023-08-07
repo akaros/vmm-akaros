@@ -216,6 +216,7 @@ pub fn load_linux64(
 
     let mut bp = BootParams::new();
     bp.hdr = header;
+    bp.hdr.type_of_loader = 0xff;
 
     // load kernel
     let kernel_offset = (bp.hdr.setup_sects as u64 + 1) * 512;
